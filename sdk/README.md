@@ -49,6 +49,39 @@ const { signedXdr } = await signWithFreighter(xdr, { networkPassphrase });
 Every failure is a `FreighterError` with a `code` — `NOT_INSTALLED`,
 `LOCKED`, `ACCESS_DENIED`, `SIGNING_REJECTED` or `WALLET_ERROR`.
 
+### Previewing fees before signing
+
+`estimateFees` re-simulates a built transaction and returns the fee it will pay
+at current network pricing, in stroops (1 XLM = 10,000,000 stroops):
+
+```typescript
+const xdr = await client.buildFinalize(sourceAddress, proposalId);
+const fee = await client.estimateFees(xdr);
+showUser(`Network fee: ${Number(fee.totalFee) / 10_000_000} XLM`);
+
+const { signedXdr } = await signWithFreighter(xdr, { networkPassphrase });
+```
+
+`totalFee` is `inclusionFee + resourceFee`. The result is an estimate: pricing
+can change between the preview and submission.
+
+### Waiting for a status change
+
+`waitForProposalStatus` polls until a proposal reaches a status, for example
+after finalizing it. It rejects with `ProposalStatusTimeoutError` when the
+status is not reached within `timeoutMs` (default 60 seconds):
+
+```typescript
+import { ProposalStatusTimeoutError } from '@quorum/sdk';
+
+await client.submitAndWait(signedFinalizeXdr);
+try {
+  const queued = await client.waitForProposalStatus(proposalId, 'Queued', { timeoutMs: 120_000 });
+} catch (error) {
+  if (error instanceof ProposalStatusTimeoutError) console.log(error.lastStatus);
+}
+```
+
 ### Events
 
 ```typescript
@@ -80,9 +113,12 @@ The following `QuorumClient` methods are implemented:
   `getVote`, `getLatestLedger`, `getVotingPower` and `getDelegate`
 - Token reads: `getBalance`, `getTokenDecimals`, `balance`, `getPastBalance`,
   `allowance` and `totalSupply`
-- Transaction flow: `buildCreateProposal`, `buildVote`, `buildDelegate`,
-  `buildUndelegate`, `buildFinalize`, `buildExecute`, `buildCancel`,
-  `buildTransfer`, `buildApprove`, `buildTransferFrom` and `submitAndWait`
+- Transaction flow: `buildFinalize`, `buildExecute`, `buildCancel`,
+  `buildTransfer`, `buildApprove`, `buildTransferFrom`, `submitAndWait`,
+  `waitForProposalStatus` and `estimateFees`
+
+Upgrading from an earlier release? `buildFinalize` and `buildExecute` changed
+signature in 0.2.0. See [MIGRATIONS.md](MIGRATIONS.md).
 
 `getVotingPower` reads the token's delegated weight at the proposal snapshot
 through `get_past_votes`. `buildDelegate` and `buildUndelegate` build unsigned

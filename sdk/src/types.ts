@@ -74,6 +74,27 @@ export interface TransactionConfirmationOptions {
   timeoutMs?: number;
 }
 
+/** Polling options for `waitForProposalStatus` (issue #274). */
+export interface WaitForStatusOptions {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * Fee breakdown for a built transaction, in stroops (issue #277).
+ *
+ * `totalFee` is what the network charges if the transaction is submitted at
+ * current pricing: show it before the signing prompt.
+ */
+export interface FeeEstimate {
+  /** Classic inclusion fee, excluding any Soroban resource fee. */
+  inclusionFee: bigint;
+  /** Soroban resource fee for the simulated footprint at current pricing. */
+  resourceFee: bigint;
+  /** `inclusionFee + resourceFee`. */
+  totalFee: bigint;
+}
+
 export interface NetworkConfig {
   rpcUrl: string;
   networkPassphrase: string;

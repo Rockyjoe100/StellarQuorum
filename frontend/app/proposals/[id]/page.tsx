@@ -8,6 +8,7 @@ import VoteButtons from "@/components/VoteButtons";
 import VoterList from "@/components/VoterList";
 import VotingPowerPreview from "@/components/VotingPowerPreview";
 import AddToCalendar from "@/components/AddToCalendar";
+import PrintButton from "@/components/PrintButton";
 import { formatDate, formatNumber, t } from "@/lib/i18n";
 
 export default async function ProposalDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -30,9 +31,12 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
-      <Link href="/proposals" className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-300 mb-8 transition-colors">
-        <ArrowLeft size={14} /> {t("proposals.back")}
-      </Link>
+      <div className="flex items-center justify-between mb-8">
+        <Link href="/proposals" className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-300 transition-colors">
+          <ArrowLeft size={14} /> {t("proposals.back")}
+        </Link>
+        <PrintButton />
+      </div>
 
       {/* Header */}
       <div className="mb-6">
@@ -89,7 +93,7 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
 
       {/* Vote CTA */}
       {proposal.status === "active" && (
-        <div className="p-5 rounded-xl bg-[#0d1520] border border-blue-800/40 mb-6">
+        <div className="p-5 rounded-xl bg-[#0d1520] border border-blue-800/40 mb-6 print:hidden">
           <h2 className="font-semibold text-white mb-3">{t("proposals.castVote")}</h2>
           {/* Above the buttons on purpose: a vote is weighted by the balance at
               the proposal's snapshot ledger, which is not necessarily the

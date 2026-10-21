@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Package-local README with installation, configuration, first-call guidance,
   and an explicit method support matrix.
+- `waitForProposalStatus()` polls a proposal until it reaches a target status,
+  and rejects with `ProposalStatusTimeoutError` if it never does.
+- `estimateFees()` re-simulates a built transaction and returns its inclusion,
+  resource and total fee in stroops, so a fee can be shown before signing.
+- `MIGRATIONS.md` records breaking changes with before and after examples, and
+  `scripts/codemod-fee-source.mjs` automates the 0.2.0 `buildFinalize` and
+  `buildExecute` update. See [MIGRATIONS.md](MIGRATIONS.md).
 
 ## [0.1.0] - 2026-09-26
 

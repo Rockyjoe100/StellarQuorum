@@ -126,7 +126,7 @@ sequenceDiagram
 
     Note over GU: Timelock window (end_ledger to queue_ledger)
 
-    GU->>G: veto(proposal_id)
+    GU->>G: veto(proposal_id, reason)
     Note over GU: Guardian can veto during timelock
     G->>G: status = Vetoed/Failed
     G-->>GU: proposal vetoed
@@ -178,7 +178,7 @@ sequenceDiagram
 
     Note over GU: Timelock window (end_ledger to queue_ledger)
 
-    GU->>G: veto(proposal_id)
+    GU->>G: veto(proposal_id, reason)
     G->>G: status = Vetoed/Failed
     G-->>GU: proposal vetoed
 
@@ -242,6 +242,44 @@ the token so direct token calls cannot create stale voting-power calculations.
   the balance first (so a failed spend cannot consume allowance), then debits
   the allowance while keeping its original expiry.
 
+## Co-sponsored proposals
+
+Design note for `create_cosponsored_proposal`, for the case where no single
+holder meets `proposal_threshold` but a group together does.
+
+**Authorization.** All co-sponsors sign the same transaction as the proposer,
+and each one's `require_auth()` is checked there. The alternative was a pledge
+registry, where co-sponsors sign an off-chain intent and a submitter reads the
+pledges at creation. A registry needs a write per pledge, expiry handling and a
+way to revoke pledges, and the threshold check needs none of that. The cost of
+the chosen model is that every co-sponsor must be online to sign at once.
+
+**Threshold.** The sum of the live balances of the proposer and every
+co-sponsor must reach `proposal_threshold`. The check is the same as for a single
+proposer, and a shortfall fails with `BelowProposalThreshold`. Co-sponsorship
+adds no votes: each voter's weight is still their snapshot balance when they vote.
+
+**Limits.** At most `MAX_COSPONSORS` (10) co-sponsors. No duplicates, and the
+proposer may not be listed (`InvalidCosponsors`). The list is stored under
+`CoSponsors(id)`. The proposer alone pays any proposal deposit.
+
+## Conviction voting
+
+A conviction proposal (`create_conviction_proposal`) keeps a time-decayed tally
+of support next to the usual raw totals.
+
+- A For or Against vote of weight `w` is added to its side at ledger `t`. Each
+  side is first brought forward to `t`.
+- Bringing a side forward by `d` ledgers halves it `floor(d / H)` times, where
+  `H = CONVICTION_HALF_LIFE` (3 days, 51,840 ledgers). Decay is stepwise, and a
+  shift of 128 or more leaves zero.
+- At `finalize`, both sides are brought forward to `end_ledger`. The proposal
+  passes when For is strictly greater than Against and quorum is met.
+
+Because decay is applied at the close and not at `finalize`, the result is the
+same whenever `finalize` is called. The window and quorum are the same as for
+standard proposals.
+
 ## Event model
 
 Both contracts publish a typed event for every state change. Each event has a
@@ -257,6 +295,13 @@ topic tuple (a symbol first, then identifiers) and a struct payload.
 | `("proposal_queued", id)` | `ProposalQueued { id, queue_ledger }` | `finalize`, only when the proposal passes, after `proposal_finalized` |
 | `("proposal_executed", id)` | `ProposalExecuted { id }` | `execute` |
 | `("proposal_cancelled", id)` | `ProposalCancelled { id, caller }` | `cancel` |
+| `("proposal_deposit_updated")` | `ProposalDepositUpdated { amount }` | `set_proposal_deposit` |
+| `("deposit_refunded", id)` | `DepositRefunded { id, proposer, amount }` | `finalize`, when the proposal passes |
+| `("deposit_forfeited", id)` | `DepositForfeited { id, amount }` | `finalize`, when the proposal fails; `cancel` |
+| `("target_allowlist_updated", target)` | `TargetAllowlistUpdated { admin, target, allowed }` | `allow_target`, `disallow_target` |
+| `("proposal_action_set", id)` | `ProposalActionSet { id, target, function }` | `set_proposal_action` |
+
+Co-sponsors are not in `ProposalCreated`; read them with `get_cosponsors`.
 
 ### Token
 
@@ -317,7 +362,7 @@ Instance storage is extended on every balance write and on `total_supply` and
 ## Errors
 
 Both contracts return typed errors (`#[contracterror]`) rather than panicking.
-`GovernanceError` codes 1-14 and `TokenError` codes 1-7 are defined in the
+`GovernanceError` codes 1-27 and `TokenError` codes 1-7 are defined in the
 respective `lib.rs`. `mint` returns `TokenError::Overflow` instead of trapping
 when it would overflow total supply, and `burn` returns it rather than taking
 total supply below zero.

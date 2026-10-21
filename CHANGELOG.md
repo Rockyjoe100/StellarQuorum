@@ -35,9 +35,30 @@ are marked **BREAKING** below.
   (`Overflow = 13`, `NoVotingPower = 14`) and `TokenError`
   (`InvalidExpiration = 7`). Clients that map error codes exhaustively need
   updating.
+- **BREAKING (governance):** `Proposal` has a new trailing field,
+  `kind: ProposalKind` (`Signaling` | `Executable`), so the XDR layout of a
+  stored proposal changed. Clients decoding `Proposal` by position must be
+  updated. `create_proposal()` keeps its signature and creates `Executable`
+  proposals. `execute()` on a `Signaling` proposal fails with the new
+  `NotExecutable = 24` error. (2026-10-21)
 
 ### Added
 
+- **Governance:** proposal deposits. `set_proposal_deposit` (admin) sets an
+  amount a proposer locks on creation. It is returned when the proposal passes
+  and burned when it fails or is cancelled while still held. `Config` gains a
+  `proposal_deposit` field, defaulting to `0`. (#256)
+- **Governance:** co-sponsored proposals. `create_cosponsored_proposal` lets up
+  to 10 co-sponsors sign with the proposer, and their combined live balance must
+  meet `proposal_threshold`. The design is recorded in `docs/architecture.md`.
+  (#253)
+- **Governance:** conviction voting. `create_conviction_proposal` decides the
+  outcome on support that halves every 3 days, so recent support counts more. The
+  curve is documented in the governance README. (#254)
+- **Governance:** execution allowlist. The admin manages `allow_target` and
+  `disallow_target`. A proposer can attach one no-argument call with
+  `set_proposal_action`, and `execute()` dispatches it only if the target is still
+  allowlisted. (#252)
 - Frontend: the app's own icon set — a favicon, a scalable `icon.svg` and an
   apple-touch icon in `app/`, plus a web manifest with the app's name, theme
   colour and 192/512 icons. The default Next.js favicon and the

@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  soroban-quickstart:
+    image: stellar/quickstart:latest
+    ports:
+      - "8000:8000"   # Horizon HTTP
+      - "11625:11625" # Stellar Core peer
+      - "11626:11626" # Stellar Core HTTP
+    environment:
+      - NETWORK=local
+      - ENABLE_SOROBAN_RPC=true
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

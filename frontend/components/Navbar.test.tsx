@@ -3,6 +3,10 @@ import Navbar from "./Navbar";
 import { WalletContext, type WalletContextValue } from "./WalletProvider";
 import { describeVisual } from "@/test/visual";
 
+// The notification center has its own suite (issue #278). Stubbing it here keeps
+// the header baselines about the header, not about a dropdown that loads proposals.
+jest.mock("./NotificationCenter", () => ({ __esModule: true, default: () => null }));
+
 // Issue #168: the sticky header defines the chrome every page shares, so its
 // link treatment and the connect button are baselined like the rest. The button
 // is also the only place the connected address enters the app, so the connected
