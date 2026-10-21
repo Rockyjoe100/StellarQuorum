@@ -46,10 +46,9 @@ pub enum GovernanceError {
     DescriptionTooLong      = 21,
     MinimumQuorumRequired   = 22,
     MinimumTimelockRequired = 23,
-    TargetNotAllowed        = 24,
-    InvalidCosponsors       = 25,
-    InvalidAmount           = 26,
-    InsufficientDeposit     = 27,
+    EmptyVetoReason         = 24,
+    VetoReasonTooLong       = 25,
+    VetoWindowClosed        = 26,
 }
 
 /// Basis-point denominator: `quorum_bps` of 500 means 5% of total supply.
@@ -85,6 +84,10 @@ const MAX_TITLE_LENGTH: u32 = 200;
 /// Maximum length for proposal description in bytes.
 /// Prevents unbounded storage costs and rent inflation.
 const MAX_DESCRIPTION_LENGTH: u32 = 10_000;
+
+/// Maximum length for a guardian veto justification in bytes.
+/// Long enough for a short rationale plus a link to a full write-up.
+const MAX_VETO_REASON_LENGTH: u32 = 1_000;
 
 /// Ledgers in roughly one day, at Stellar's ~5 second close time.
 const LEDGERS_PER_DAY: u32 = 17_280;
@@ -201,6 +204,16 @@ pub struct ProposalCancelled {
     pub caller: Address,
 }
 
+/// Emitted when the guardian vetoes a queued proposal. `reason` gives token
+/// holders an on-chain record of why a passed proposal was blocked.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalVetoed {
+    pub id: u64,
+    pub guardian: Address,
+    pub reason: String,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferred {
@@ -253,7 +266,7 @@ pub struct ProposalActionSet {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProposalStatus {
-    Pending, Active, Passed, Failed, Queued, Executed, Cancelled, Expired,
+    Pending, Active, Passed, Failed, Queued, Executed, Cancelled, Expired, Vetoed,
 }
 
 /// Whether a proposal only expresses an opinion or also dispatches actions.
@@ -909,6 +922,38 @@ impl GovernanceContract {
         env.events().publish(
             (Symbol::new(&env, "proposal_cancelled"), proposal_id),
             ProposalCancelled { id: proposal_id, caller },
+        );
+        Ok(())
+    }
+
+    /// Guardian veto during the timelock window. Only the guardian may call
+    /// this, only on a Queued proposal, and only before `queue_ledger`.
+    /// `reason` is required and is emitted with the event so the veto is
+    /// auditable on-chain.
+    pub fn veto(env: Env, caller: Address, proposal_id: u64, reason: String) -> Result<(), GovernanceError> {
+        let config: Config = Self::require_config(&env)?;
+        caller.require_auth();
+        if caller != config.guardian {
+            return Err(GovernanceError::Unauthorized);
+        }
+        if reason.is_empty() {
+            return Err(GovernanceError::EmptyVetoReason);
+        }
+        if reason.len() > MAX_VETO_REASON_LENGTH {
+            return Err(GovernanceError::VetoReasonTooLong);
+        }
+        let mut proposal: Proposal = env.storage().persistent()
+            .get(&DataKey::Proposal(proposal_id)).ok_or(GovernanceError::ProposalNotFound)?;
+        if proposal.status != ProposalStatus::Queued { return Err(GovernanceError::ProposalNotPassed); }
+        if env.ledger().sequence() >= proposal.queue_ledger { return Err(GovernanceError::VetoWindowClosed); }
+
+        proposal.status = ProposalStatus::Vetoed;
+        env.storage().persistent().set(&DataKey::Proposal(proposal_id), &proposal);
+        Self::touch_proposal(&env, proposal_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "proposal_vetoed"), proposal_id),
+            ProposalVetoed { id: proposal_id, guardian: caller, reason },
         );
         Ok(())
     }

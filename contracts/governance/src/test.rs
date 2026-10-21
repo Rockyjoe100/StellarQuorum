@@ -911,6 +911,126 @@ fn a_cancelled_proposal_stops_accepting_votes() {
     );
 }
 
+// ─── Veto ────────────────────────────────────────────────────────────────────
+
+fn veto_reason(env: &Env) -> String {
+    String::from_str(env, "Action drains the treasury; see incident report #12.")
+}
+
+#[test]
+fn the_guardian_can_veto_a_queued_proposal_during_the_timelock() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+
+    governance.veto(&guardian, &proposal_id, &veto_reason(&env));
+    assert_eq!(
+        governance.get_proposal(&proposal_id).status,
+        ProposalStatus::Vetoed
+    );
+}
+
+#[test]
+fn a_vetoed_proposal_cannot_be_executed() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+    governance.veto(&guardian, &proposal_id, &veto_reason(&env));
+
+    let queue_ledger = governance.get_proposal(&proposal_id).queue_ledger;
+    env.ledger().set_sequence_number(queue_ledger);
+    assert_eq!(
+        governance.try_execute(&admin, &proposal_id),
+        Err(Ok(GovernanceError::ProposalNotPassed))
+    );
+}
+
+#[test]
+fn a_non_guardian_cannot_veto() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+
+    assert_eq!(
+        governance.try_veto(&admin, &proposal_id, &veto_reason(&env)),
+        Err(Ok(GovernanceError::Unauthorized))
+    );
+    assert_eq!(
+        governance.get_proposal(&proposal_id).status,
+        ProposalStatus::Queued
+    );
+}
+
+#[test]
+fn a_veto_without_a_reason_is_rejected() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+
+    assert_eq!(
+        governance.try_veto(&guardian, &proposal_id, &String::from_str(&env, "")),
+        Err(Ok(GovernanceError::EmptyVetoReason))
+    );
+}
+
+#[test]
+fn a_veto_reason_over_the_length_limit_is_rejected() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+
+    let at_limit = "x".repeat(MAX_VETO_REASON_LENGTH as usize);
+    let over_limit = "x".repeat(MAX_VETO_REASON_LENGTH as usize + 1);
+    assert_eq!(
+        governance.try_veto(&guardian, &proposal_id, &String::from_str(&env, &over_limit)),
+        Err(Ok(GovernanceError::VetoReasonTooLong))
+    );
+    governance.veto(&guardian, &proposal_id, &String::from_str(&env, &at_limit));
+    assert_eq!(
+        governance.get_proposal(&proposal_id).status,
+        ProposalStatus::Vetoed
+    );
+}
+
+#[test]
+fn a_veto_after_the_timelock_has_elapsed_is_rejected() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+
+    let queue_ledger = governance.get_proposal(&proposal_id).queue_ledger;
+    env.ledger().set_sequence_number(queue_ledger);
+    assert_eq!(
+        governance.try_veto(&guardian, &proposal_id, &veto_reason(&env)),
+        Err(Ok(GovernanceError::VetoWindowClosed))
+    );
+}
+
+#[test]
+fn a_proposal_that_is_not_queued_cannot_be_vetoed() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    let guardian = governance.get_config().guardian;
+    governance.vote(&admin, &proposal_id, &VOTE_FOR);
+
+    assert_eq!(
+        governance.try_veto(&guardian, &proposal_id, &veto_reason(&env)),
+        Err(Ok(GovernanceError::ProposalNotPassed))
+    );
+}
+
 // ─── Storage lifetime ────────────────────────────────────────────────────────
 
 /// Remaining TTL, in ledgers, of a proposal entry.
@@ -1224,6 +1344,27 @@ fn cancelling_emits_proposal_cancelled_with_the_caller() {
     assert_eq!(
         ProposalCancelled::try_from_val(&env, &data).unwrap(),
         ProposalCancelled { id: proposal_id, caller: admin }
+    );
+}
+
+#[test]
+fn vetoing_emits_proposal_vetoed_with_the_reason() {
+    let env = Env::default();
+    let (admin, governance_id, proposal_id) = open_with_holders(&env, 1_000_000, QUORUM_BPS, &[]);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    queue_proposal(&env, &governance, &admin, proposal_id);
+    let guardian = governance.get_config().guardian;
+
+    governance.veto(&guardian, &proposal_id, &veto_reason(&env));
+
+    let (topics, data) = last_governance_event(&env, &governance_id);
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "proposal_vetoed"), proposal_id).into_val(&env)
+    );
+    assert_eq!(
+        ProposalVetoed::try_from_val(&env, &data).unwrap(),
+        ProposalVetoed { id: proposal_id, guardian, reason: veto_reason(&env) }
     );
 }
 

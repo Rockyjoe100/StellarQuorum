@@ -124,7 +124,7 @@ sequenceDiagram
 
     Note over GU: Timelock window (end_ledger to queue_ledger)
 
-    GU->>G: veto(proposal_id)
+    GU->>G: veto(proposal_id, reason)
     Note over GU: Guardian can veto during timelock
     G->>G: status = Vetoed/Failed
     G-->>GU: proposal vetoed
@@ -176,7 +176,7 @@ sequenceDiagram
 
     Note over GU: Timelock window (end_ledger to queue_ledger)
 
-    GU->>G: veto(proposal_id)
+    GU->>G: veto(proposal_id, reason)
     G->>G: status = Vetoed/Failed
     G-->>GU: proposal vetoed
 
