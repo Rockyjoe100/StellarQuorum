@@ -94,8 +94,9 @@ ledger. Nothing is written per ledger, so decay costs no storage or fees.
   ledger (the closing value wins), and entries older than `CHECKPOINT_RETENTION`
   are pruned except the newest of them, so a snapshot inside the window still
   resolves.
-- The active lock is the newest entry whose `amount > 0`. A lock in effect at
-  ledger `L` is the newest entry with `ledger <= L`.
+- The active lock is the newest entry whose `amount > 0`. The lock that counts
+  for a snapshot at ledger `L` is the newest entry with `ledger < L`: a stake
+  made in the snapshot ledger itself adds no boost to that snapshot.
 - Balances are not touched by staking, so `get_past_balance` and supply
   checkpoints keep their current meaning.
 
@@ -115,6 +116,9 @@ changes with every unlock.
   after the snapshot contributes nothing to that snapshot.
 - **No early exit.** Locked tokens cannot be transferred or burned, so the boost
   cannot be kept after the holder has sold the commitment.
+- **No same-ledger boost.** A lock counts only from the ledger after it was
+  made. Without this, a holder could stake in the ledger where a proposal is
+  created, after the proposal opens, and have the boost land in its snapshot.
 - **Snapshots stay fixed.** Lock history is written only on stake and unstake,
   and reads are historical. A later stake or unstake cannot rewrite a snapshot.
 - **Weight can exceed supply.** Boosts are on top of balances, so the sum of
