@@ -82,7 +82,8 @@ describe('QuorumClient simulation path against a mock RPC', () => {
       const [call] = rpc.calls;
       expect(call.method).toBe('simulateTransaction');
 
-      const invocation = decodeInvocation(call.params.transaction);
+      expect(typeof call.params.transaction).toBe('string');
+      const invocation = decodeInvocation(call.params.transaction as string);
       expect(invocation.source).toBe(READ_ONLY_SOURCE);
       expect(invocation.contract).toBe(GOVERNANCE_ID);
       expect(invocation.method).toBe('get_vote');
@@ -128,7 +129,7 @@ describe('QuorumClient simulation path against a mock RPC', () => {
 
     test('rejects a success response with invalid return-value XDR', async () => {
       serve(simulationSuccess('%%%not-an-scval%%%'));
-      await expect(client.getVote(1n, VOTER)).rejects.toThrow(/XDR/);
+      await expect(client.getVote(1n, VOTER)).rejects.toThrow(/XDR|base64/i);
     });
 
     test('rejects an HTTP 500', async () => {

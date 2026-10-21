@@ -20,6 +20,15 @@ export enum GovernanceError {
   TimelockNotExpired = 12,
   Overflow = 13,
   NoVotingPower = 14,
+  ExecutionExpired = 15,
+  ContractPaused = 16,
+  InvalidQuorumBps = 17,
+  NotInitialized = 18,
+  EmptyTitle = 19,
+  TitleTooLong = 20,
+  DescriptionTooLong = 21,
+  MinimumQuorumRequired = 22,
+  MinimumTimelockRequired = 23,
 }
 
 /** Mirror of `TokenError` in contracts/token/src/lib.rs. Same rules as above. */
@@ -31,6 +40,8 @@ export enum TokenError {
   InvalidAmount = 5,
   Overflow = 6,
   InvalidExpiration = 7,
+  InvalidSupply = 8,
+  InvalidDecimals = 9,
 }
 
 export class RpcTimeoutError extends Error {

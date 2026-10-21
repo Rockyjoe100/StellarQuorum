@@ -38,6 +38,6 @@ describe('parsing raw contract errors', () => {
 
   it('rejects codes outside the enum', () => {
     expect(parseGovernanceError('Error(Contract, #99)')).toBeUndefined();
-    expect(parseTokenError('Error(Contract, #8)')).toBeUndefined();
+    expect(parseTokenError('Error(Contract, #99)')).toBeUndefined();
   });
 });

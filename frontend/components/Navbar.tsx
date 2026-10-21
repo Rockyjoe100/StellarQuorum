@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { Scale } from "lucide-react";
 import { useWallet } from "./WalletProvider";
 import AccountSwitcher from "./AccountSwitcher";
+import NotificationCenter from "./NotificationCenter";
 import { t } from "@/lib/i18n";
 
 export default function Navbar() {
@@ -22,7 +23,10 @@ export default function Navbar() {
           <Link href="/create" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">{t("nav.create")}</Link>
           <Link href="/delegation" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">Delegation</Link>
           {address ? (
-            <AccountSwitcher />
+            <>
+              <NotificationCenter address={address} />
+              <AccountSwitcher />
+            </>
           ) : (
             <button
               onClick={connect}

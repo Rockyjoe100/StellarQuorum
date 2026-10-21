@@ -30,6 +30,10 @@ export const EVENT_TOPICS = [
   'burn',
   'approve',
   'admin_transferred',
+  'delegated',
+  'contract_initialized',
+  'contract_paused',
+  'contract_unpaused',
 ] as const;
 
 export type QuorumEventType = (typeof EVENT_TOPICS)[number];
@@ -52,7 +56,7 @@ export interface VoteCastEvent {
   voter: string;
   /** 0 Against, 1 For, 2 Abstain — the contract rejects anything else. */
   support: VoteSupport;
-  /** Weight counted: the voter's balance at the snapshot ledger. */
+  /** Weight counted: effective voting power at the snapshot ledger. */
   votingPower: bigint;
 }
 
@@ -121,6 +125,29 @@ export interface AdminTransferredEvent {
   newAdmin: string;
 }
 
+export interface DelegatedEvent {
+  type: 'delegated';
+  delegator: string;
+  delegatee: string;
+}
+
+export interface ContractInitializedEvent {
+  type: 'contract_initialized';
+  admin: string;
+  guardian: string;
+  token: string;
+  quorumBps: number;
+  votingPeriod: number;
+  timelockPeriod: number;
+  executionGracePeriod: number;
+  proposalThreshold: bigint;
+}
+
+export interface ContractPauseEvent {
+  type: 'contract_paused' | 'contract_unpaused';
+  caller: string;
+}
+
 /** Any event emitted by the governance or token contract, discriminated by `type`. */
 export type QuorumEvent =
   | ProposalCreatedEvent
@@ -133,7 +160,10 @@ export type QuorumEvent =
   | MintEvent
   | BurnEvent
   | ApproveEvent
-  | AdminTransferredEvent;
+  | AdminTransferredEvent
+  | DelegatedEvent
+  | ContractInitializedEvent
+  | ContractPauseEvent;
 
 /**
  * The parts of an RPC event the decoder needs.
@@ -218,6 +248,27 @@ export function decodeEvent(event: RawContractEvent): QuorumEvent | null {
   const raw = struct(event.value, topic);
 
   switch (topic) {
+    case 'delegated':
+      return {
+        type: 'delegated',
+        delegator: field<string>(raw, 'delegator', topic),
+        delegatee: field<string>(raw, 'delegatee', topic),
+      };
+    case 'contract_initialized':
+      return {
+        type: 'contract_initialized',
+        admin: field<string>(raw, 'admin', topic),
+        guardian: field<string>(raw, 'guardian', topic),
+        token: field<string>(raw, 'token', topic),
+        quorumBps: field<number>(raw, 'quorum_bps', topic),
+        votingPeriod: field<number>(raw, 'voting_period', topic),
+        timelockPeriod: field<number>(raw, 'timelock_period', topic),
+        executionGracePeriod: field<number>(raw, 'execution_grace_period', topic),
+        proposalThreshold: field<bigint>(raw, 'proposal_threshold', topic),
+      };
+    case 'contract_paused':
+    case 'contract_unpaused':
+      return { type: topic, caller: field<string>(raw, 'caller', topic) };
     case 'proposal_created':
       return {
         type: 'proposal_created',

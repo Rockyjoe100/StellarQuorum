@@ -3,7 +3,9 @@ import type { AddressInfo } from 'net';
 import {
   Address,
   SorobanDataBuilder,
-  StrKey,
+  Networks,
+  Transaction,
+  TransactionBuilder,
   nativeToScVal,
   scValToNative,
   xdr,
@@ -22,7 +24,7 @@ export interface RpcCall {
   /** JSON-RPC method name sent by the caller. */
   method: string;
   /** JSON-RPC params object, verbatim. */
-  params: any;
+  params: Record<string, unknown>;
 }
 
 export interface RawReply {
@@ -104,17 +106,16 @@ export interface DecodedInvocation {
 
 /** Decodes the `invokeContract` operation inside a simulateTransaction request. */
 export function decodeInvocation(transactionXdr: string): DecodedInvocation {
-  const tx = xdr.TransactionEnvelope.fromXDR(transactionXdr, 'base64').v1().tx();
-  const invoke = tx.operations()[0].body().invokeHostFunctionOp().hostFunction().invokeContract();
-  const sourceKey = tx.sourceAccount().ed25519();
-  if (!sourceKey) {
-    throw new Error('expected an ed25519 source account');
-  }
+  const tx = TransactionBuilder.fromXDR(transactionXdr, Networks.TESTNET);
+  if (!(tx instanceof Transaction)) throw new Error('expected a transaction');
+  const func = (tx.operations[0] as { func: xdr.HostFunction }).func;
+  if (func.type !== 'hostFunctionTypeInvokeContract') throw new Error('expected a contract invocation');
+  const invoke = func.invokeContract;
   return {
-    source: StrKey.encodeEd25519PublicKey(Buffer.from(sourceKey)),
-    contract: Address.fromScAddress(invoke.contractAddress()).toString(),
-    method: invoke.functionName().toString(),
-    args: invoke.args().map(arg => scValToNative(arg)),
+    source: tx.source,
+    contract: Address.fromScAddress(invoke.contractAddress).toString(),
+    method: invoke.functionName.toString(),
+    args: invoke.args.map(arg => scValToNative(arg)),
   };
 }
 
@@ -144,7 +145,7 @@ export class MockRpcServer {
         const chunks: Buffer[] = [];
         req.on('data', chunk => chunks.push(chunk));
         req.on('end', () => {
-          let parsed: any;
+          let parsed: RpcCall;
           try {
             parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           } catch {

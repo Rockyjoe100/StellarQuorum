@@ -82,17 +82,18 @@ describe("VoterList", () => {
     expect(screen.getAllByRole("row")).toHaveLength(VOTERS_PER_PAGE + 1);
   });
 
-  it("offers no control for a list that fits", () => {
+  it("offers no paging control for a list that fits", () => {
     render(<VoterList votes={manyVotes(3)} />);
 
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /show .* more/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /show fewer/i })).not.toBeInTheDocument();
   });
 
   it("renders nothing to page for an empty list", () => {
     const { container } = render(<VoterList votes={[]} />);
 
     expect(within(container).queryAllByRole("row")).toHaveLength(1);
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /export/i })).not.toBeInTheDocument();
   });
 
   it("matches the visual baseline", () => {

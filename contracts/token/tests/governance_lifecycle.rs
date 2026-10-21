@@ -34,6 +34,7 @@ fn setup<'a>() -> Dao<'a> {
     env.mock_all_auths();
     env.ledger().set_sequence_number(100);
     let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
 
     let token_id = env.register(QuorumToken, ());
     let token = QuorumTokenClient::new(&env, &token_id);
@@ -49,10 +50,12 @@ fn setup<'a>() -> Dao<'a> {
     let governance = GovernanceContractClient::new(&env, &governance_id);
     governance.initialize(
         &admin,
+        &guardian,
         &token_id,
         &QUORUM_BPS,
         &VOTING_PERIOD,
         &TIMELOCK_PERIOD,
+        &(17_280 * 7),
         &PROPOSAL_THRESHOLD,
     );
 

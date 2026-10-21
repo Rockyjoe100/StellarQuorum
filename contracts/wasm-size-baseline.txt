@@ -4,10 +4,14 @@
 # Lines starting with # are comments.
 #
 # Recorded from a release build (`opt-level = "z"`, lto, panic = "abort",
-# strip = symbols) of the workspace on rustc 1.94.1 / soroban-sdk 22.0.x:
+# strip = symbols) of the workspace on rustc 1.99.1 / soroban-sdk 22.0.11:
 #
-#   quorum_token.wasm        20,483 bytes
-#   quorum_governance.wasm   28,536 bytes
+#   quorum_token.wasm        28,713 bytes
+#   quorum_governance.wasm   46,624 bytes
+#
+# Re-measured for #310 and delegation (#1/#47/#60): voting-power checkpoints,
+# token and governance delegation entry points, and snapshot-start enforcement.
+# This records intentional feature growth; the 10% regression margin is kept.
 #
 # The check allows each artifact to grow by at most 10% over these numbers
 # (override with WASM_SIZE_MAX_GROWTH_PCT). Toolchain drift between the local
@@ -18,5 +22,5 @@
 #   1. Build:  cargo build --target wasm32-unknown-unknown --release --manifest-path contracts/Cargo.toml
 #   2. Report: bash scripts/check-wasm-size.sh   (prints current sizes)
 #   3. Copy the "Current" sizes below and explain the growth in the PR.
-quorum_token.wasm 20483
-quorum_governance.wasm 28536
+quorum_token.wasm 28713
+quorum_governance.wasm 46624

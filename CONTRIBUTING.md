@@ -125,13 +125,52 @@ All test suites and verification checks must pass before opening or merging a pu
 | **SDK** | Client SDK tests (`sdk/`) | `make test-sdk` | `cd sdk && npm test` | `npm test` |
 | **Integration Stubs** | Integration test stubs (`tests/`) | `make test-integration` | `cd frontend && npx jest ../tests` | `npx jest tests/` |
 
+### Local Soroban Network (Docker Compose)
+
+A `docker-compose.yml` at the repo root starts the Stellar quickstart image as a
+self-contained local Soroban network — no testnet account or rate limits needed:
+
+```bash
+docker compose up -d
+# Wait until healthy (Horizon responds at http://localhost:8000/)
+docker compose ps
+```
+
+**Deploy both contracts against the local network:**
+
+```bash
+# Fund a local deployer account via the built-in friendbot
+stellar keys generate deployer --network local --fund \
+  --rpc-url http://localhost:8000/soroban/rpc \
+  --network-passphrase "Standalone Network ; February 2017"
+
+# Build
+cd contracts && cargo build --target wasm32-unknown-unknown --release && cd ..
+
+# Deploy governance contract
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/governance.wasm \
+  --source deployer \
+  --rpc-url http://localhost:8000/soroban/rpc \
+  --network-passphrase "Standalone Network ; February 2017"
+
+# Deploy token contract
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/token.wasm \
+  --source deployer \
+  --rpc-url http://localhost:8000/soroban/rpc \
+  --network-passphrase "Standalone Network ; February 2017"
+```
+
+When you're done, `docker compose down` stops and removes the container.
+
 ### Local Network Lifecycle Test
 
 `sdk/test/e2e/lifecycle.e2e.test.ts` drives a full proposal lifecycle (create,
 three votes, finalize, timelock, execute) through the SDK against a real Soroban
-standalone network. It is skipped by `npm test`. To run it, build the contracts,
-start a quickstart network, install the `stellar` CLI, and point the suite at the
-network:
+standalone network. It is skipped by `npm test`. To run it, start the local
+network with `docker compose up -d`, build the contracts, and point the suite at
+the network:
 
 ```bash
 cd contracts && cargo build --target wasm32-unknown-unknown --release && cd ..
@@ -567,6 +606,20 @@ async getConfig(): Promise<GovernanceConfig> {
 - All public method parameters must have explicit TypeScript types
 - No `any` — use `unknown` if the type is genuinely unknown
 - Return types must be explicitly annotated (no implicit inference for public APIs)
+
+### Breaking Changes
+
+Before 1.0, a MINOR bump may break the API ([versioning policy](docs/publishing.md)).
+A PR that changes or removes a public SDK signature must:
+
+1. Add a section to [`sdk/MIGRATIONS.md`](sdk/MIGRATIONS.md) under the version
+   that will ship it, with `before` and `after` code and the reason for the change.
+2. Add an `Unreleased` entry to [`sdk/CHANGELOG.md`](sdk/CHANGELOG.md) that links
+   to that section.
+3. Add a codemod under `sdk/scripts/` when the change is mechanical, such as a
+   rename or an added or reordered parameter. Follow
+   [`codemod-fee-source.mjs`](sdk/scripts/codemod-fee-source.mjs): dry run by
+   default, `--write` to apply.
 
 ---
 

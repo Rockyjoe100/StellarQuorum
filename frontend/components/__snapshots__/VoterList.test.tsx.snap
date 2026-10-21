@@ -6,6 +6,44 @@ exports[`VoterList matches the visual baseline 1`] = `
   "children": [
     {
       "attrs": {
+        "class": "flex gap-2 mb-3 justify-end",
+      },
+      "children": [
+        {
+          "attrs": {
+            "aria-label": "Export votes as CSV",
+            "class": "flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-[#162032] border border-[#1e2d40] text-slate-400 hover:text-slate-200 hover:border-blue-800 transition-colors print:hidden",
+          },
+          "children": [
+            {
+              "attrs": {},
+              "children": [],
+              "tag": "svg",
+            },
+            "CSV",
+          ],
+          "tag": "button",
+        },
+        {
+          "attrs": {
+            "aria-label": "Export votes as JSON",
+            "class": "flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-[#162032] border border-[#1e2d40] text-slate-400 hover:text-slate-200 hover:border-blue-800 transition-colors print:hidden",
+          },
+          "children": [
+            {
+              "attrs": {},
+              "children": [],
+              "tag": "svg",
+            },
+            "JSON",
+          ],
+          "tag": "button",
+        },
+      ],
+      "tag": "div",
+    },
+    {
+      "attrs": {
         "class": "overflow-x-auto",
       },
       "children": [

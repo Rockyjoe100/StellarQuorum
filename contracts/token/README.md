@@ -10,7 +10,10 @@ SEP-41 compatible governance token for the Quorum protocol.
 - `approve` — set an allowance for a spender, valid until `expiration_ledger`
 - `transfer_from` — spender moves tokens on behalf of an owner, against an allowance
 - `allowance` — remaining allowance, or 0 once the approval has lapsed
-- `get_past_balance` — balance as of a past ledger, backing snapshot voting power
+- `get_past_balance` — raw token balance as of a past ledger, excluding delegation
+- `delegate(delegator, delegatee)` — assign voting power without moving tokens
+- `get_delegates(account)` — current representative, defaulting to the account itself
+- `get_past_votes(account, ledger)` — historical effective voting power including delegation
 - `get_past_total_supply` — total supply as of a past ledger, for auditing a
   proposal's `quorum_required`
 - `mint` returns `Overflow` if the new total supply or balance would exceed
@@ -20,6 +23,28 @@ SEP-41 compatible governance token for the Quorum protocol.
 `burn_from` lets an approved spender burn against the owner's allowance and
 emits a burn event naming that owner. `spendable_balance` is equal to `balance`
 because this token has no locked balances.
+
+## Delegation and snapshots
+
+Holders vote for themselves by default, preserving existing voting behavior.
+`delegate` requires the holder's authorization. Delegating to another address
+moves the holder's own weight to that representative; self-delegation clears
+the assignment. The all-zero account
+`GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF` also clears it.
+Repeated calls to the current representative have no effect. Each change emits
+`delegated` with the delegator and actual representative in its topics and payload.
+
+Delegation is not transitive: a representative who delegates their own balance
+keeps any weight entrusted to them by other holders. Transfers, allowance spends,
+mints, and both burn paths update the affected representatives' vote checkpoints.
+Balances and allowances do not move when delegating.
+
+`get_past_votes` reads the closing weight at or before the requested ledger.
+Re-delegating or clearing later does not rewrite earlier snapshots. Vote history
+uses the same 60-day retention window, cutoff anchor, and 90-day storage lifetime
+as balance history. For existing deployments, balance history supplies historical
+self-voting power until vote history is first materialized. Governance waits for
+the proposal's snapshot ledger to close before accepting votes.
 
 Initialization accepts decimal precision from 0 through 18 and rejects a
 negative initial supply. A zero initial supply is valid for tokens minted later.

@@ -41,3 +41,35 @@
     outline-offset: 2px;
   }
 }
+
+/* Issue #287: print-friendly proposal view */
+@media print {
+  body {
+    background-color: #fff !important;
+    color: #000 !important;
+  }
+
+  nav,
+  header,
+  footer,
+  [data-print="hidden"],
+  .print\:hidden {
+    display: none !important;
+  }
+
+  [class*="bg-[#"] {
+    background-color: transparent !important;
+    border-color: #ccc !important;
+  }
+
+  [class*="text-slate-"],
+  [class*="text-emerald-"],
+  [class*="text-red-"],
+  [class*="text-blue-"] {
+    color: #000 !important;
+  }
+
+  a::after {
+    content: none !important;
+  }
+}

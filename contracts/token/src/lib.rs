@@ -90,6 +90,14 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
+/// Emitted when a holder changes the destination of their own voting power.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Delegated {
+    pub delegator: Address,
+    pub delegatee: Address,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin, Name, Symbol, Decimals, TotalSupply,
@@ -98,6 +106,8 @@ pub enum DataKey {
     Checkpoints(Address),
     PendingAdmin,
     SupplyCheckpoints,
+    Delegate(Address),
+    VoteCheckpoints(Address),
 }
 
 /// Ledgers in roughly one day, at Stellar's ~5 second close time.
@@ -105,7 +115,8 @@ const LEDGERS_PER_DAY: u32 = 17_280;
 
 /// Bump persistent entries whose remaining life has fallen below 30 days.
 ///
-/// Snapshot voting power is read from `Checkpoints`, and an entry that expired
+/// Snapshot voting power is read from `VoteCheckpoints` (or legacy balance
+/// checkpoints), and an entry that expired
 /// mid-vote would make `get_past_balance` return 0 for that holder. The
 /// governance create form offers voting periods up to 30 days, so the threshold
 /// has to exceed that. Matches the governance contract.
@@ -140,7 +151,7 @@ impl QuorumToken {
         env.storage().instance().set(&DataKey::Symbol, &symbol);
         env.storage().instance().set(&DataKey::Decimals, &decimals);
         Self::set_total_supply(&env, initial_supply);
-        Self::set_balance(&env, &admin, initial_supply);
+        Self::set_balance(&env, &admin, initial_supply)?;
 
         // The genesis allocation is a mint. Emitting it keeps supply
         // reconstructible from events alone, with no special-case for deploy.
@@ -158,8 +169,8 @@ impl QuorumToken {
     /// Balance of `owner` as of the end of `ledger`.
     ///
     /// Returns the most recent checkpoint at or before `ledger`, or 0 if the
-    /// address held nothing that far back. Governance reads voting power
-    /// through this, using a proposal's `snapshot_ledger`.
+    /// address held nothing that far back. This excludes delegation;
+    /// governance reads effective power through `get_past_votes`.
     pub fn get_past_balance(env: Env, owner: Address, ledger: u32) -> i128 {
         Self::touch_instance(&env);
         Self::value_at(&Self::checkpoints(&env, &owner), ledger)
@@ -264,8 +275,8 @@ impl QuorumToken {
             .ok_or(TokenError::Overflow)?;
 
         // Complete all validation before mutating the balance or allowance.
-        Self::set_balance(&env, &from, bal - amount);
-        env.storage().instance().set(&DataKey::TotalSupply, &total_supply);
+        Self::set_balance(&env, &from, bal - amount)?;
+        Self::set_total_supply(&env, total_supply);
 
         let key = DataKey::Allowance(from.clone(), spender);
         env.storage().persistent().set(
@@ -295,7 +306,7 @@ impl QuorumToken {
         let bal = Self::balance(env.clone(), to.clone());
         let new_balance = bal.checked_add(amount).ok_or(TokenError::Overflow)?;
         Self::set_total_supply(&env, total_supply);
-        Self::set_balance(&env, &to, new_balance);
+        Self::set_balance(&env, &to, new_balance)?;
 
         env.events().publish(
             (Symbol::new(&env, "mint"), to.clone()),
@@ -317,7 +328,7 @@ impl QuorumToken {
             .checked_sub(amount)
             .filter(|remaining| *remaining >= 0)
             .ok_or(TokenError::Overflow)?;
-        Self::set_balance(&env, &from, bal - amount);
+        Self::set_balance(&env, &from, bal - amount)?;
         Self::set_total_supply(&env, total_supply);
 
         env.events().publish(
@@ -395,8 +406,60 @@ impl QuorumToken {
     pub fn symbol(env: Env) -> String { env.storage().instance().get(&DataKey::Symbol).unwrap() }
     pub fn decimals(env: Env) -> u32 { env.storage().instance().get(&DataKey::Decimals).unwrap() }
 
-    // TODO: implement delegate() for voting power delegation
-    // TODO: implement get_past_votes(address, ledger) for snapshot governance
+    /// Assigns the holder's own balance to one representative. Incoming
+    /// delegations stay with their recipient: delegation is not transitive.
+    /// Self-delegation (or the all-zero account) restores the holder's votes.
+    pub fn delegate(env: Env, delegator: Address, delegatee: Address) -> Result<(), TokenError> {
+        delegator.require_auth();
+        Self::touch_instance(&env);
+        let delegatee = if delegatee == Address::from_str(
+            &env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ) { delegator.clone() } else { delegatee };
+        let previous = Self::get_delegates(env.clone(), delegator.clone());
+        if previous == delegatee { return Ok(()); }
+
+        let amount = Self::balance(env.clone(), delegator.clone());
+        let previous_votes = Self::current_votes(&env, &previous)
+            .checked_sub(amount).filter(|value| *value >= 0).ok_or(TokenError::Overflow)?;
+        let next_votes = Self::current_votes(&env, &delegatee)
+            .checked_add(amount).ok_or(TokenError::Overflow)?;
+        Self::set_votes(&env, &previous, previous_votes);
+        Self::set_votes(&env, &delegatee, next_votes);
+
+        let key = DataKey::Delegate(delegator.clone());
+        if delegatee == delegator {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &delegatee);
+            Self::touch(&env, &key);
+        }
+        env.events().publish(
+            (Symbol::new(&env, "delegated"), delegator.clone(), delegatee.clone()),
+            Delegated { delegator, delegatee },
+        );
+        Ok(())
+    }
+
+    /// The current representative; holders vote for themselves by default.
+    pub fn get_delegates(env: Env, account: Address) -> Address {
+        Self::touch_instance(&env);
+        let key = DataKey::Delegate(account.clone());
+        match env.storage().persistent().get(&key) {
+            Some(delegatee) => {
+                Self::touch(&env, &key);
+                delegatee
+            }
+            None => account,
+        }
+    }
+
+    /// Effective voting power at the close of `ledger`. Delegations and all
+    /// balance-changing paths record weight, so later mappings cannot rewrite
+    /// the weight of an existing proposal's snapshot.
+    pub fn get_past_votes(env: Env, account: Address, ledger: u32) -> i128 {
+        Self::touch_instance(&env);
+        Self::value_at(&Self::vote_checkpoints(&env, &account), ledger)
+    }
 }
 
 /// Internal helpers — outside `#[contractimpl]` so they are not exported as
@@ -443,11 +506,12 @@ impl QuorumToken {
         let from_bal = Self::balance(env.clone(), from.clone());
         if from_bal < amount { return Err(TokenError::InsufficientBalance); }
 
-        Self::set_balance(env, from, from_bal - amount);
+        Self::set_balance(env, from, from_bal - amount)?;
         // Read `to` after debiting `from`, so a self-transfer nets to zero
         // instead of crediting a stale balance.
         let to_bal = Self::balance(env.clone(), to.clone());
-        Self::set_balance(env, to, to_bal + amount);
+        let new_balance = to_bal.checked_add(amount).ok_or(TokenError::Overflow)?;
+        Self::set_balance(env, to, new_balance)?;
 
         env.events().publish(
             (Symbol::new(env, "transfer"), from.clone(), to.clone()),
@@ -473,8 +537,16 @@ impl QuorumToken {
     /// Every balance mutation goes through here; a write that bypassed it would
     /// leave a gap that `get_past_balance` would silently read straight past,
     /// handing the holder the wrong voting power.
-    fn set_balance(env: &Env, owner: &Address, balance: i128) {
+    fn set_balance(env: &Env, owner: &Address, balance: i128) -> Result<(), TokenError> {
         Self::touch_instance(env);
+        let old_balance = Self::balance(env.clone(), owner.clone());
+        let delegatee = Self::get_delegates(env.clone(), owner.clone());
+        let votes = Self::current_votes(env, &delegatee)
+            .checked_sub(old_balance).filter(|value| *value >= 0)
+            .and_then(|value| value.checked_add(balance)).ok_or(TokenError::Overflow)?;
+        // Read/write voting history before balances, including the lazy
+        // fallback for holders whose history predates delegation support.
+        Self::set_votes(env, &delegatee, votes);
         let balance_key = DataKey::Balance(owner.clone());
         env.storage().persistent().set(&balance_key, &balance);
         Self::touch(env, &balance_key);
@@ -503,6 +575,40 @@ impl QuorumToken {
         let checkpoints_key = DataKey::Checkpoints(owner.clone());
         env.storage().persistent().set(&checkpoints_key, &checkpoints);
         Self::touch(env, &checkpoints_key);
+        Ok(())
+    }
+
+    fn vote_checkpoints(env: &Env, owner: &Address) -> Vec<Checkpoint> {
+        let key = DataKey::VoteCheckpoints(owner.clone());
+        match env.storage().persistent().get(&key) {
+            Some(history) => {
+                Self::touch(env, &key);
+                history
+            }
+            // Existing holders retain their historical self-voting power.
+            // Their first delegation or balance change materializes this
+            // history before any change to balances or delegation mappings.
+            None => Self::checkpoints(env, owner),
+        }
+    }
+
+    fn current_votes(env: &Env, owner: &Address) -> i128 {
+        Self::value_at(&Self::vote_checkpoints(env, owner), env.ledger().sequence())
+    }
+
+    fn set_votes(env: &Env, owner: &Address, votes: i128) {
+        let mut history = Self::vote_checkpoints(env, owner);
+        let ledger = env.ledger().sequence();
+        Self::record(&mut history, ledger, votes);
+        let cutoff = ledger.saturating_sub(CHECKPOINT_RETENTION);
+        let mut stale = 0;
+        while stale < history.len() && history.get(stale).unwrap().ledger < cutoff {
+            stale += 1;
+        }
+        if stale > 1 { history = history.slice(stale - 1..); }
+        let key = DataKey::VoteCheckpoints(owner.clone());
+        env.storage().persistent().set(&key, &history);
+        Self::touch(env, &key);
     }
 
     fn supply_checkpoints(env: &Env) -> Vec<Checkpoint> {

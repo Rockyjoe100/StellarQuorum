@@ -27,7 +27,7 @@ QuorumClient (sdk/)
 GovernanceContract ──── cross-contract calls ────► QuorumToken
   (proposals, votes,     total_supply()             (balances, checkpoints,
    quorum, timelock)     balance()                   allowances, supply)
-        │                get_past_balance()
+        │                get_past_votes()
         ▼
    Contract events ──► Stellar ledger ──► indexers / clients
 ```
@@ -53,7 +53,7 @@ Governance depends on three token functions (the `TokenInterface` trait in
 |---|---|---|
 | `create_proposal` | `balance(proposer)` | Live balance must be at least `Config.proposal_threshold`, otherwise `BelowProposalThreshold`. Deliberately live, since the threshold is about who may open a proposal now. |
 | `create_proposal` | `total_supply()` | Derives `quorum_required = total_supply * quorum_bps / 10000` (checked multiply, integer division), frozen into the proposal at creation. Mints or burns during voting do not move the bar. |
-| `vote` | `get_past_balance(voter, proposal.snapshot_ledger)` | The voter's weight. A result of 0 or less is rejected with `NoVotingPower`. |
+| `vote` | `get_past_votes(voter, proposal.snapshot_ledger)` | The voter's weight. A result of 0 or less is rejected with `NoVotingPower`. |
 
 `finalize`, `execute`, `cancel` and the view functions make no token calls.
 
@@ -103,7 +103,7 @@ sequenceDiagram
     Note over V: Voting period (start_ledger to end_ledger)
 
     V->>G: vote(proposal_id, support)
-    G->>T: get_past_balance(voter, snapshot_ledger)
+    G->>T: get_past_votes(voter, snapshot_ledger)
     T-->>G: returns voting_power
     G->>G: record vote weight
     G-->>V: vote recorded
@@ -160,7 +160,7 @@ sequenceDiagram
     Note over V: Voting period (start_ledger to end_ledger)
 
     V->>G: vote(proposal_id, support)
-    G->>T: get_past_balance(voter, snapshot_ledger)
+    G->>T: get_past_votes(voter, snapshot_ledger)
     T-->>G: returns voting_power
     G->>G: record vote weight
     G-->>V: vote recorded
@@ -211,9 +211,18 @@ The token implements this with per-address checkpoints:
   reads as `0`; raise the constant if governance is ever configured with a longer
   `voting_period`. See [contracts/token/README.md](../contracts/token/README.md#checkpoint-growth).
 
-Delegation (`delegate()`) and `get_past_votes()` are not implemented; both
-contracts carry `TODO`s for them, and `DataKey::Delegate` in the governance
-contract is reserved but unused.
+Delegation is recorded in the token under `Delegate` and `VoteCheckpoints`.
+Every balance change updates the effective representative's weight, and
+delegation changes move only the holder's own weight between representatives.
+`get_past_votes(account, ledger)` reads these checkpoints with the same ledger
+boundary, pruning, and TTL rules as balance history. Existing balance history is
+preserved as self-voting history when first materializing vote checkpoints.
+
+Governance exposes `delegate`, `undelegate`, and `get_delegate`, forwarding to the
+configured token. Its local mapping records facade calls; views and voting use
+the token so direct token calls cannot create stale voting-power calculations.
+`vote()` reads `get_past_votes` at the proposal snapshot and rejects calls before
+`start_ledger`, ensuring the snapshot ledger has closed before votes are counted.
 
 ## Allowances and expiry (token)
 
@@ -231,6 +240,44 @@ contract is reserved but unused.
   the balance first (so a failed spend cannot consume allowance), then debits
   the allowance while keeping its original expiry.
 
+## Co-sponsored proposals
+
+Design note for `create_cosponsored_proposal`, for the case where no single
+holder meets `proposal_threshold` but a group together does.
+
+**Authorization.** All co-sponsors sign the same transaction as the proposer,
+and each one's `require_auth()` is checked there. The alternative was a pledge
+registry, where co-sponsors sign an off-chain intent and a submitter reads the
+pledges at creation. A registry needs a write per pledge, expiry handling and a
+way to revoke pledges, and the threshold check needs none of that. The cost of
+the chosen model is that every co-sponsor must be online to sign at once.
+
+**Threshold.** The sum of the live balances of the proposer and every
+co-sponsor must reach `proposal_threshold`. The check is the same as for a single
+proposer, and a shortfall fails with `BelowProposalThreshold`. Co-sponsorship
+adds no votes: each voter's weight is still their snapshot balance when they vote.
+
+**Limits.** At most `MAX_COSPONSORS` (10) co-sponsors. No duplicates, and the
+proposer may not be listed (`InvalidCosponsors`). The list is stored under
+`CoSponsors(id)`. The proposer alone pays any proposal deposit.
+
+## Conviction voting
+
+A conviction proposal (`create_conviction_proposal`) keeps a time-decayed tally
+of support next to the usual raw totals.
+
+- A For or Against vote of weight `w` is added to its side at ledger `t`. Each
+  side is first brought forward to `t`.
+- Bringing a side forward by `d` ledgers halves it `floor(d / H)` times, where
+  `H = CONVICTION_HALF_LIFE` (3 days, 51,840 ledgers). Decay is stepwise, and a
+  shift of 128 or more leaves zero.
+- At `finalize`, both sides are brought forward to `end_ledger`. The proposal
+  passes when For is strictly greater than Against and quorum is met.
+
+Because decay is applied at the close and not at `finalize`, the result is the
+same whenever `finalize` is called. The window and quorum are the same as for
+standard proposals.
+
 ## Event model
 
 Both contracts publish a typed event for every state change. Each event has a
@@ -246,6 +293,13 @@ topic tuple (a symbol first, then identifiers) and a struct payload.
 | `("proposal_queued", id)` | `ProposalQueued { id, queue_ledger }` | `finalize`, only when the proposal passes, after `proposal_finalized` |
 | `("proposal_executed", id)` | `ProposalExecuted { id }` | `execute` |
 | `("proposal_cancelled", id)` | `ProposalCancelled { id, caller }` | `cancel` |
+| `("proposal_deposit_updated")` | `ProposalDepositUpdated { amount }` | `set_proposal_deposit` |
+| `("deposit_refunded", id)` | `DepositRefunded { id, proposer, amount }` | `finalize`, when the proposal passes |
+| `("deposit_forfeited", id)` | `DepositForfeited { id, amount }` | `finalize`, when the proposal fails; `cancel` |
+| `("target_allowlist_updated", target)` | `TargetAllowlistUpdated { admin, target, allowed }` | `allow_target`, `disallow_target` |
+| `("proposal_action_set", id)` | `ProposalActionSet { id, target, function }` | `set_proposal_action` |
+
+Co-sponsors are not in `ProposalCreated`; read them with `get_cosponsors`.
 
 ### Token
 
@@ -306,7 +360,7 @@ Instance storage is extended on every balance write and on `total_supply` and
 ## Errors
 
 Both contracts return typed errors (`#[contracterror]`) rather than panicking.
-`GovernanceError` codes 1-14 and `TokenError` codes 1-7 are defined in the
+`GovernanceError` codes 1-27 and `TokenError` codes 1-7 are defined in the
 respective `lib.rs`. `mint` returns `TokenError::Overflow` instead of trapping
 when it would overflow total supply, and `burn` returns it rather than taking
 total supply below zero.

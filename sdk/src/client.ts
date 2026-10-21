@@ -1,5 +1,5 @@
-import { rpc, Contract, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, Address, Account, xdr } from '@stellar/stellar-sdk';
-import type { Proposal, GovernanceConfig, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, TransactionConfirmationOptions, ReadMethod, ReadOptions } from './types.js';
+import { rpc, Contract, Transaction, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, Address, Account, xdr } from '@stellar/stellar-sdk';
+import type { Proposal, GovernanceConfig, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, TransactionConfirmationOptions, WaitForStatusOptions, FeeEstimate, ReadMethod, ReadOptions } from './types.js';
 import { ReadCache } from './cache.js';
 import { SimulationBatcher, postSimulationBatch } from './batch.js';
 import { GovernanceError, parseGovernanceError, RpcTimeoutError, TransactionFailedError, contractErrorCode } from './errors.js';
@@ -91,6 +91,24 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * `waitForProposalStatus` stopped polling before the proposal reached the
+ * target status (issue #274). `lastStatus` is the status seen on the final poll.
+ */
+export class ProposalStatusTimeoutError extends Error {
+  readonly proposalId: bigint;
+  readonly targetStatus: ProposalStatus;
+  readonly lastStatus: ProposalStatus;
+
+  constructor(proposalId: bigint, targetStatus: ProposalStatus, lastStatus: ProposalStatus, timeoutMs: number) {
+    super(`Proposal ${String(proposalId)} did not reach ${targetStatus} within ${timeoutMs}ms (last status: ${lastStatus})`);
+    this.name = 'ProposalStatusTimeoutError';
+    this.proposalId = proposalId;
+    this.targetStatus = targetStatus;
+    this.lastStatus = lastStatus;
+  }
+}
+
 function mapGovernanceSimulationError(method: string, raw: unknown): Error {
   const message = raw instanceof Error ? raw.message : String(raw);
   if (/#\s*3\b/.test(message) || /ProposalNotFound/.test(message)) {
@@ -174,8 +192,13 @@ export class QuorumClient {
   async getVotingPower(voter: string, snapshotLedger: number, options?: ReadOptions): Promise<bigint> {
     return this.cache.read('getVotingPower', [voter, snapshotLedger], options, async () => {
       const token = await this.tokenContract(options);
-      return BigInt(await this.simulateOn<bigint | number>(token, 'get_past_balance', new Address(voter).toScVal(), nativeToScVal(snapshotLedger, { type: 'u32' })));
+      return BigInt(await this.simulateOn<bigint | number>(token, 'get_past_votes', new Address(voter).toScVal(), nativeToScVal(snapshotLedger, { type: 'u32' })));
     });
+  }
+
+  /** Current representative, including delegations made directly on the token. */
+  async getDelegate(holder: string): Promise<string> {
+    return this.simulate<string>('get_delegate', new Address(holder).toScVal());
   }
 
   async getBalance(voter: string, options?: ReadOptions): Promise<bigint> {
@@ -319,7 +342,8 @@ export class QuorumClient {
   }
 
   /**
-   * Balance of `owner` as of the end of `ledger` (snapshot voting power).
+   * Raw balance of `owner` as of the end of `ledger`, excluding delegation.
+   * Use `getVotingPower` for the effective weight at a proposal snapshot.
    */
   async getPastBalance(owner: string, ledger: number, options?: ReadOptions): Promise<bigint> {
     return this.cache.read('getPastBalance', [owner, ledger], options, () => this.simulateToken<bigint>(
@@ -470,6 +494,81 @@ export class QuorumClient {
   }
 
   /**
+   * Polls `getProposal()` until the proposal reaches `targetStatus` (issue #274).
+   *
+   * Use it after `finalize()` or `execute()` to wait for the status change the
+   * transaction causes. Every poll bypasses the read cache, so a cached `Active`
+   * cannot hide a `Queued` that has already landed.
+   *
+   * @param proposalId Proposal to watch.
+   * @param targetStatus Status to wait for.
+   * @param options.pollIntervalMs Delay between polls (default: the client's
+   * `pollIntervalMs`, then {@link DEFAULT_POLL_INTERVAL_MS}).
+   * @param options.timeoutMs Give up after this long (default {@link DEFAULT_CONFIRMATION_TIMEOUT_MS}).
+   * @returns The proposal as observed when it first had `targetStatus`.
+   * @throws {ProposalNotFoundError} the proposal does not exist.
+   * @throws {ProposalStatusTimeoutError} the status was not reached in time.
+   * @example
+   * await client.submitAndWait(signedFinalizeXdr);
+   * const queued = await client.waitForProposalStatus(7n, 'Queued');
+   */
+  async waitForProposalStatus(
+    proposalId: bigint,
+    targetStatus: ProposalStatus,
+    options?: WaitForStatusOptions,
+  ): Promise<Proposal> {
+    const pollIntervalMs = options?.pollIntervalMs ?? this.config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const proposal = await this.getProposal(proposalId, { bypassCache: true });
+      if (!proposal) throw new ProposalNotFoundError(proposalId);
+      if (proposal.status === targetStatus) return proposal;
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new ProposalStatusTimeoutError(proposalId, targetStatus, proposal.status, timeoutMs);
+      }
+      await delay(Math.min(pollIntervalMs, remainingMs));
+    }
+  }
+
+  /**
+   * Previews the fee a built transaction will pay, before it is signed (issue #277).
+   *
+   * Simulates the transaction again, so the resource fee reflects current network
+   * pricing rather than the value captured when it was built. Works on every
+   * `build*` output. A resource fee the transaction already declares is replaced
+   * by the fresh estimate, so it is never counted twice.
+   *
+   * Simulation is read-only: nothing is signed or submitted.
+   *
+   * @param transactionXdr Base64 transaction XDR, as returned by a `build*` method.
+   * @returns Fees in stroops.
+   * @throws {Error} the simulation failed.
+   * @example
+   * const xdr = await client.buildVote(voter, 7n, 1);
+   * const fee = await client.estimateFees(xdr);
+   * showUser(`Network fee: ${Number(fee.totalFee) / 10_000_000} XLM`);
+   * const { signedXdr } = await signWithFreighter(xdr, { networkPassphrase });
+   */
+  async estimateFees(transactionXdr: string): Promise<FeeEstimate> {
+    const tx = TransactionBuilder.fromXDR(transactionXdr, this.config.networkPassphrase);
+    if (!(tx instanceof Transaction)) {
+      throw new Error('estimateFees does not accept fee-bump transactions');
+    }
+
+    const simulation = await this.read('simulate:estimateFees', () => this.server.simulateTransaction(tx));
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw new Error(`Fee estimate failed: ${simulation.error}`);
+    }
+
+    const resourceFee = BigInt(simulation.minResourceFee);
+    const inclusionFee = BigInt(tx.fee) - declaredResourceFee(tx);
+    return { inclusionFee, resourceFee, totalFee: inclusionFee + resourceFee };
+  }
+
+  /**
    * Builds, simulates and assembles a signable transaction.
    *
    * Fetches the source account for its sequence number, simulates first so
@@ -563,6 +662,25 @@ export class QuorumClient {
       new Address(voter).toScVal(),
       nativeToScVal(proposalId, { type: 'u64' }),
       nativeToScVal(support, { type: 'u32' }),
+    );
+  }
+
+  /** Assign voting power without moving tokens. The holder must authorize. */
+  async buildDelegate(delegator: string, delegatee: string, source?: string): Promise<string> {
+    return this.buildGovernanceTransaction(
+      source ?? delegator,
+      'delegate',
+      new Address(delegator).toScVal(),
+      new Address(delegatee).toScVal(),
+    );
+  }
+
+  /** Clear delegation and restore the holder's own voting power. */
+  async buildUndelegate(delegator: string, source?: string): Promise<string> {
+    return this.buildGovernanceTransaction(
+      source ?? delegator,
+      'undelegate',
+      new Address(delegator).toScVal(),
     );
   }
 
@@ -708,6 +826,14 @@ function isTimeoutError(error: unknown): boolean {
 function formatTransactionFailure(response: { hash?: string; txHash?: string; errorResult?: unknown; resultXdr?: unknown }): string {
   const detail = response.errorResult ?? response.resultXdr;
   return detail ? `Transaction ${response.hash ?? response.txHash ?? ''} failed: ${String(detail)}` : `Transaction ${response.hash ?? response.txHash ?? ''} failed`;
+}
+
+/** Resource fee a prepared Soroban transaction already declares; zero for classic transactions. */
+function declaredResourceFee(tx: Transaction): bigint {
+  const envelope = tx.toEnvelope();
+  if (envelope.type !== 'envelopeTypeTx') return BigInt(0);
+  const ext = envelope.v1.tx.ext;
+  return ext.type === 'sorobanData' ? ext.sorobanData.resourceFee : BigInt(0);
 }
 
 // ─── Decoding ──────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ const simulate = jest.spyOn(rpc.Server.prototype, 'simulateTransaction');
 const CONTRACT = 'CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526';
 const TOKEN = 'CABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMWJO7';
 const VOTER = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
+const FEE_PAYER = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
 const client = new QuorumClient({
   ...TESTNET,
@@ -66,6 +67,39 @@ const proposalFields = {
 const proposalVal = structVal(proposalFields);
 
 afterEach(() => simulate.mockReset());
+
+describe('delegation', () => {
+  it('reads the representative from governance', async () => {
+    returns(new Address(TOKEN).toScVal());
+    expect(await client.getDelegate(VOTER)).toBe(TOKEN);
+    expect(callAddress()).toBe(CONTRACT);
+    expect(lastCall().method).toBe('get_delegate');
+    expect(lastCall().args.map(a => Address.fromScVal(a).toString())).toEqual([VOTER]);
+  });
+
+  it.each([false, true])('builds delegation/revocation with the holder separate from the fee payer (clear=%s)', async clear => {
+    const getAccount = jest.spyOn(rpc.Server.prototype, 'getAccount').mockResolvedValue(new Account(FEE_PAYER, '0'));
+    const prepare = jest.spyOn(rpc.Server.prototype, 'prepareTransaction').mockImplementation(async tx => tx as never);
+    try {
+      const encoded = clear
+        ? await client.buildUndelegate(VOTER, FEE_PAYER)
+        : await client.buildDelegate(VOTER, TOKEN, FEE_PAYER);
+      const tx = prepare.mock.calls[0][0] as Transaction;
+      expect(encoded).toBe(tx.toXDR());
+      expect(tx.source).toBe(FEE_PAYER);
+      expect(getAccount).toHaveBeenCalledWith(FEE_PAYER);
+      const func = (tx.operations[0] as { func: xdr.HostFunction }).func;
+      if (func.type !== 'hostFunctionTypeInvokeContract') throw new Error('Expected contract invocation');
+      const call = func.invokeContract;
+      expect(Address.fromScAddress(call.contractAddress).toString()).toBe(CONTRACT);
+      expect(call.functionName.toString()).toBe(clear ? 'undelegate' : 'delegate');
+      expect(call.args.map(a => Address.fromScVal(a).toString())).toEqual(clear ? [VOTER] : [VOTER, TOKEN]);
+    } finally {
+      getAccount.mockRestore();
+      prepare.mockRestore();
+    }
+  });
+});
 
 describe('argument encoding', () => {
   it('get_proposal(id: u64)', async () => {
@@ -168,15 +202,51 @@ it('getLatestLedger returns the RPC sequence', async () => {
 });
 
 // The token is a separate contract from governance: these reads have to address
-// it, and get_past_balance has to be given the snapshot ledger rather than the
+// it, and get_past_votes has to be given the snapshot ledger rather than the
 // latest one, or the weight shown before signing is the wrong number.
 describe('voting power', () => {
+  it('caches delegated snapshots separately from raw balances and supports fresh reads', async () => {
+    const scoped = new QuorumClient({
+      ...TESTNET,
+      governanceContractId: CONTRACT,
+      tokenContractId: TOKEN,
+      cache: { enabled: true },
+    } as QuorumClientConfig);
+
+    returns(nativeToScVal(250n, { type: 'i128' }));
+    expect(await scoped.getVotingPower(VOTER, 999)).toBe(250n);
+    expect(callAddress()).toBe(TOKEN);
+    expect(lastCall().method).toBe('get_past_votes');
+    expect(scValToNative(lastCall().args[1])).toBe(999);
+    expect(await scoped.getVotingPower(VOTER, 999)).toBe(250n);
+    expect(simulate).toHaveBeenCalledTimes(1);
+
+    returns(nativeToScVal(7n, { type: 'i128' }));
+    expect(await scoped.getPastBalance(VOTER, 999)).toBe(7n);
+    expect(lastCall().method).toBe('get_past_balance');
+
+    returns(nativeToScVal(400n, { type: 'i128' }));
+    expect(await scoped.getVotingPower(VOTER, 1000)).toBe(400n);
+    expect(lastCall().method).toBe('get_past_votes');
+    expect(scValToNative(lastCall().args[1])).toBe(1000);
+    expect(simulate).toHaveBeenCalledTimes(3);
+
+    returns(nativeToScVal(300n, { type: 'i128' }));
+    expect(await scoped.getVotingPower(VOTER, 999, { bypassCache: true })).toBe(300n);
+    expect(await scoped.getVotingPower(VOTER, 999)).toBe(250n);
+
+    returns(nativeToScVal(350n, { type: 'i128' }));
+    expect(await scoped.getVotingPower(VOTER, 999, { invalidateCache: true })).toBe(350n);
+    expect(await scoped.getVotingPower(VOTER, 999)).toBe(350n);
+    expect(simulate).toHaveBeenCalledTimes(5);
+  });
+
   it('getVotingPower encodes (voter, snapshot_ledger) against the token', async () => {
     returns(nativeToScVal(250n, { type: 'i128' }));
     expect(await client.getVotingPower(VOTER, 999)).toBe(250n);
 
     const { method, args } = lastCall();
-    expect(method).toBe('get_past_balance');
+    expect(method).toBe('get_past_votes');
     expect(args.map(a => a.type)).toEqual(['scvAddress', 'scvU32']);
     expect(Address.fromScVal(args[0]).toString()).toBe(VOTER);
     expect(scValToNative(args[1])).toBe(999);

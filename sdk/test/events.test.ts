@@ -28,6 +28,22 @@ function event(topic: string, value: xdr.ScVal): RawContractEvent {
 
 const sample: Array<[string, xdr.ScVal, Record<string, unknown>]> = [
   [
+    'delegated',
+    structVal({ delegator: addr(VOTER), delegatee: addr(VOTER) }),
+    { type: 'delegated', delegator: VOTER, delegatee: VOTER },
+  ],
+  [
+    'contract_initialized',
+    structVal({ admin: addr(VOTER), guardian: addr(VOTER), token: addr(VOTER),
+      quorum_bps: u32(500), voting_period: u32(100), timelock_period: u32(50),
+      execution_grace_period: u32(700), proposal_threshold: i128(10n) }),
+    { type: 'contract_initialized', admin: VOTER, guardian: VOTER, token: VOTER,
+      quorumBps: 500, votingPeriod: 100, timelockPeriod: 50, executionGracePeriod: 700, proposalThreshold: 10n },
+  ],
+  ...(['contract_paused', 'contract_unpaused'] as const).map(topic => [
+    topic, structVal({ caller: addr(VOTER) }), { type: topic, caller: VOTER },
+  ] as [string, xdr.ScVal, Record<string, unknown>]),
+  [
     'proposal_created',
     structVal({
       id: u64(7n),

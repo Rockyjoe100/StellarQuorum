@@ -8,6 +8,9 @@ use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::{IntoVal, TryFromVal, Val};
 
+#[path = "test_delegation.rs"]
+mod delegation;
+
 const INITIAL_SUPPLY: i128 = 1_000_000;
 /// Expiry far enough out that approvals stay live for tests that are not about
 /// expiry.
@@ -473,6 +476,9 @@ fn burn_of_the_entire_balance_is_allowed() {
 
     assert_eq!(token.balance(&holder), 0);
     assert_eq!(token.total_supply(), INITIAL_SUPPLY - 1_000);
+}
+
+#[test]
 fn mint_that_would_overflow_total_supply_returns_overflow() {
     let env = Env::default();
     let (admin, token) = deploy(&env);

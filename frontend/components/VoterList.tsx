@@ -1,10 +1,31 @@
 "use client";
 
 import { useState } from "react";
+import { Download } from "lucide-react";
 import type { Vote, VoteChoice } from "@/lib/types";
 import { formatDate, formatNumber, t } from "@/lib/i18n";
 import { formatAbsolute } from "@/lib/time";
 import { VOTERS_PER_PAGE, hiddenCount, truncateAddress, visibleVotes } from "@/lib/voters";
+
+function exportCSV(votes: Vote[]) {
+  const header = "address,choice,weight,timestamp";
+  const rows = votes.map(v =>
+    [`"${v.voter.replace(/"/g, '""')}"`, v.choice, v.weight, v.timestamp].join(",")
+  );
+  const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "votes.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportJSON(votes: Vote[]) {
+  const blob = new Blob([JSON.stringify(votes, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "votes.json"; a.click();
+  URL.revokeObjectURL(url);
+}
 
 // Issue #146: the per-vote history, which the contract does not store and the
 // UI therefore gets from the vote_cast events (or the fixture).
@@ -27,6 +48,26 @@ export default function VoterList({ votes }: { votes: Vote[] }) {
 
   return (
     <div>
+      {votes.length > 0 && (
+        <div className="flex gap-2 mb-3 justify-end">
+          <button
+            type="button"
+            onClick={() => exportCSV(votes)}
+            aria-label="Export votes as CSV"
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-[#162032] border border-[#1e2d40] text-slate-400 hover:text-slate-200 hover:border-blue-800 transition-colors print:hidden"
+          >
+            <Download size={12} /> CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => exportJSON(votes)}
+            aria-label="Export votes as JSON"
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-[#162032] border border-[#1e2d40] text-slate-400 hover:text-slate-200 hover:border-blue-800 transition-colors print:hidden"
+          >
+            <Download size={12} /> JSON
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">{t("proposals.recentVotes")}</caption>
