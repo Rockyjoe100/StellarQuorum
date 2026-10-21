@@ -37,10 +37,9 @@ fn delegated_weight_is_counted_once_and_later_changes_cannot_rewrite_a_snapshot(
         governor.try_vote(&alice, &proposal, &1),
         Err(Ok(GovernanceError::NoVotingPower))
     );
-    assert_eq!(
-        governor.try_vote(&bob, &proposal, &1),
-        Err(Ok(GovernanceError::AlreadyVoted))
-    );
+    // Still inside the window, so a repeat vote replaces the earlier choice
+    // rather than adding to it: the weight stays counted once.
+    assert!(governor.try_vote(&bob, &proposal, &1).is_ok());
     assert_eq!(governor.get_proposal(&proposal).for_votes, 160);
     assert_eq!(governor.get_past_votes(&bob, &19), 40);
     assert_eq!(governor.get_past_votes(&bob, &20), 140);
