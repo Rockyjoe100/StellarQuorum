@@ -66,6 +66,60 @@
       "returns": "Promise<bigint>"
     },
     {
+      "name": "getProposalActions",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<ProposalAction[]>"
+    },
+    {
+      "name": "getCosponsors",
+      "parameters": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<string[]>"
+    },
+    {
+      "name": "isTargetAllowed",
+      "parameters": [
+        {
+          "name": "target",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<boolean>"
+    },
+    {
       "name": "getLatestLedger",
       "parameters": [
         {
@@ -440,6 +494,12 @@
           "rest": false
         },
         {
+          "name": "metadataUri",
+          "type": "string",
+          "optional": true,
+          "rest": false
+        },
+        {
           "name": "source",
           "type": "string",
           "optional": true,
@@ -783,6 +843,24 @@
         }
       ],
       "returns": "Promise<bigint>"
+    },
+    {
+      "name": "getStake",
+      "parameters": [
+        {
+          "name": "holder",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<StakeInfo | null>"
     },
     {
       "name": "spendableBalance",
