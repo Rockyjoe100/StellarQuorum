@@ -97,6 +97,30 @@ Covers `proposal_created`, `vote_cast`, `proposal_finalized`,
 `mint`, `burn`, `approve` and `admin_transferred`. Unknown topics decode to
 `null` instead of throwing.
 
+### Creating and listing proposals
+
+```typescript
+const standardXdr = await client.buildCreateProposal(proposer, 'Upgrade fee', 'Lower fee to 10 bps');
+
+// Co-sponsored proposals require signatures from the proposer and every cosponsor:
+const cosponsoredXdr = await client.buildCreateCosponsoredProposal(
+  proposer,
+  [cosponsorAddress],
+  'Ecosystem grant',
+  'Fund SDK tooling',
+);
+
+const convictionXdr = await client.buildCreateConvictionProposal(
+  proposer,
+  'Streaming grant',
+  'Conviction-weighted proposal',
+);
+
+const active = await client.getProposalsByStatus('Active', { limit: 10 });
+const cosponsors = await client.getCosponsors(7n);
+const conviction = await client.getConviction(7n);
+```
+
 ## Python read-only bindings
 
 Python services can install the governance query package from source. See

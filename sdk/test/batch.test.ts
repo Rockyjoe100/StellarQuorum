@@ -79,16 +79,16 @@ test('a page uses one count plus one batch, preserving order despite reversed re
   const sdk = client();
   const proposals = await sdk.getProposals({ offset: 1, limit: 3 });
   expect(proposals.map(p => p.id)).toEqual([2n, 3n, 4n]);
-  expect(requests).toHaveLength(2);
-  expect(Array.isArray(requests[1]) && requests[1].length).toBe(3);
+  expect(requests).toHaveLength(3);
+  expect(Array.isArray(requests[2]) && requests[2].length).toBe(3);
 });
 
 test('getAllProposals and chunked pages retain the same values as individual reads', async () => {
   const expected = await client(false).getAllProposals();
-  expect(requests).toHaveLength(6);
+  expect(requests).toHaveLength(7);
   requests = [];
   expect(await client(true, { simulationBatchSize: 2 }).getAllProposals()).toEqual(expected);
-  expect(requests).toHaveLength(4); // count + 2 batches + singleton
+  expect(requests).toHaveLength(5); // get_proposals probe + count + 2 batches + singleton
 });
 
 test.each(['rejected', 'http-rejected', 'missing-id', 'duplicate-id', 'invalid-json'] as Mode[])(
@@ -96,9 +96,9 @@ test.each(['rejected', 'http-rejected', 'missing-id', 'duplicate-id', 'invalid-j
     mode = unsupported;
     const sdk = client();
     expect(await sdk.getProposals({ limit: 3 })).toHaveLength(3);
-    expect(requests).toHaveLength(5); // count, rejected batch, 3 reads
+    expect(requests).toHaveLength(6); // get_proposals probe, count, rejected batch, 3 reads
     expect(await sdk.getProposals({ limit: 3 })).toHaveLength(3);
-    expect(requests).toHaveLength(9); // no second probe
+    expect(requests).toHaveLength(10); // no second probe
     expect(requests.filter(Array.isArray)).toHaveLength(1);
   },
 );
@@ -106,25 +106,25 @@ test.each(['rejected', 'http-rejected', 'missing-id', 'duplicate-id', 'invalid-j
 test('ProposalNotFound remains null and is filtered out of the list', async () => {
   mode = 'contract-error';
   expect((await client().getProposals({ limit: 3 })).map(p => p.id)).toEqual([1n, 2n]);
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(3);
 });
 
 test.each(['rpc-error', 'missing-result'] as Mode[])('surfaces %s instead of silently dropping a proposal', async failure => {
   mode = failure;
   await expect(client().getProposals({ limit: 3 })).rejects.toBeDefined();
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(3);
 });
 
 test('retries transient HTTP errors without falling back', async () => {
   mode = 'transient';
   expect(await client(true, { readRetryAttempts: 1, retryBaseDelayMs: 0, retryJitterMs: 0 }).getProposals({ limit: 3 })).toHaveLength(3);
-  expect(requests).toHaveLength(3);
+  expect(requests).toHaveLength(4);
 });
 
 test.each(['timeout', 'body-timeout'] as Mode[])('times out and aborts a stalled batch (%s)', async stalled => {
   mode = stalled;
   await expect(client(true, { requestTimeoutMs: 200 }).getProposals({ limit: 3 })).rejects.toBeInstanceOf(RpcTimeoutError);
-  expect(requests).toHaveLength(2); // count + batch, without fallback
+  expect(requests).toHaveLength(3); // get_proposals probe + count + batch, without fallback
 });
 
 test('empty/singleton pages skip batching and invalid windows do not send requests', async () => {
@@ -142,9 +142,9 @@ test('batch reads populate the same cache used by single reads and support bypas
   await sdk.getProposals({ limit: 3 });
   expect((await sdk.getProposal(2n))?.id).toBe(2n);
   await sdk.getProposals({ limit: 3 });
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(3);
   await sdk.getProposals({ limit: 3, bypassCache: true });
-  expect(requests).toHaveLength(4);
+  expect(requests).toHaveLength(5);
 });
 
 test('rejects invalid batch sizes', () => {

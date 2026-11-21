@@ -84,24 +84,6 @@
       "returns": "Promise<ProposalAction[]>"
     },
     {
-      "name": "getCosponsors",
-      "parameters": [
-        {
-          "name": "id",
-          "type": "bigint",
-          "optional": false,
-          "rest": false
-        },
-        {
-          "name": "options",
-          "type": "ReadOptions",
-          "optional": true,
-          "rest": false
-        }
-      ],
-      "returns": "Promise<string[]>"
-    },
-    {
       "name": "isTargetAllowed",
       "parameters": [
         {
@@ -323,6 +305,42 @@
       "returns": "Promise<Proposal[]>"
     },
     {
+      "name": "getCosponsors",
+      "parameters": [
+        {
+          "name": "proposalId",
+          "type": "bigint",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<string[]>"
+    },
+    {
+      "name": "getConviction",
+      "parameters": [
+        {
+          "name": "proposalId",
+          "type": "bigint",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "options",
+          "type": "ReadOptions",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<ConvictionTally | null>"
+    },
+    {
       "name": "balance",
       "parameters": [
         {
@@ -496,6 +514,84 @@
         {
           "name": "metadataUri",
           "type": "string",
+          "optional": true,
+          "rest": false
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<string>"
+    },
+    {
+      "name": "buildCreateCosponsoredProposal",
+      "parameters": [
+        {
+          "name": "proposer",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "cosponsors",
+          "type": "string[]",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "metadataUri",
+          "type": "any",
+          "optional": true,
+          "rest": false
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "optional": true,
+          "rest": false
+        }
+      ],
+      "returns": "Promise<string>"
+    },
+    {
+      "name": "buildCreateConvictionProposal",
+      "parameters": [
+        {
+          "name": "proposer",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "optional": false,
+          "rest": false
+        },
+        {
+          "name": "metadataUri",
+          "type": "any",
           "optional": true,
           "rest": false
         },

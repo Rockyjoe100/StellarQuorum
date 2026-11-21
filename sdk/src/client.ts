@@ -1,5 +1,5 @@
 import { rpc, Contract, Transaction, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, Address, Account, xdr } from '@stellar/stellar-sdk';
-import type { Proposal, ProposalAction, StakeInfo, GovernanceConfig, ContractVersions, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, TransactionConfirmationOptions, WaitForStatusOptions, FeeEstimate, ReadMethod, ReadOptions, GovernanceStats } from './types.js';
+import type { Proposal, ProposalAction, StakeInfo, ConvictionTally, GovernanceConfig, ContractVersions, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, TransactionConfirmationOptions, WaitForStatusOptions, FeeEstimate, ReadMethod, ReadOptions, GovernanceStats } from './types.js';
 import { ReadCache } from './cache.js';
 import { SimulationBatcher, postSimulationBatch } from './batch.js';
 import { GovernanceContractError, GOVERNANCE_ERROR_MESSAGES, GovernanceError, governanceErrorFromCode, parseGovernanceError, RpcTimeoutError, TransactionFailedError, contractErrorCode } from './errors.js';
@@ -45,6 +45,8 @@ function allowsInsecureRpc(rpcUrl: string): boolean {
  * RPC response caps, with diminishing returns above 50.
  */
 export const DEFAULT_PAGE_SIZE = 50;
+const MAX_PROPOSALS_PER_CALL = 100;
+const MAX_STATUS_SCAN_PAGES = 20;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 export const DEFAULT_READ_RETRY_ATTEMPTS = 2;
 export const DEFAULT_RETRY_BASE_DELAY_MS = 100;
@@ -158,6 +160,7 @@ export class QuorumClient {
   private config: QuorumClientConfig;
   private readonly cache: ReadCache;
   private readonly batcher?: SimulationBatcher;
+  private getProposalsSupported: boolean | undefined;
 
   constructor(config: QuorumClientConfig) {
     this.config = config;
@@ -251,13 +254,6 @@ export class QuorumClient {
         args: action.args,
       }));
     });
-  }
-
-  /** Addresses that co-sponsored a proposal when it was created. */
-  async getCosponsors(id: bigint, options?: ReadOptions): Promise<string[]> {
-    return this.cache.read('getCosponsors', [id], options, async () =>
-      this.simulate<string[]>('get_cosponsors', nativeToScVal(id, { type: 'u64' })),
-    );
   }
 
   /** Whether a proposal action target is currently permitted by governance. */
@@ -366,11 +362,40 @@ export class QuorumClient {
     });
   }
 
+  /**
+   * Lists proposals matching `status` (issue #462).
+   *
+   * When `options.limit` is provided, pages through proposals until `limit`
+   * matching proposals are found or all proposals are exhausted (capped at
+   * `MAX_STATUS_SCAN_PAGES` pages).
+   */
   async getProposalsByStatus(status: Proposal['status'], options?: GetProposalsOptions): Promise<Proposal[]> {
-    // Filtering happens after pagination, so callers needing a complete
-    // filtered set should omit pagination (fetch all, then filter).
-    const all = await this.getAllProposals(options);
-    return all.filter(p => p.status === status);
+    const limit = options?.limit;
+    if (limit === undefined) {
+      const all = await this.getAllProposals(options);
+      return all.filter(p => p.status === status);
+    }
+    if (!Number.isInteger(limit) || limit < 0) {
+      throw new Error(`Invalid limit ${String(limit)}: must be a non-negative integer`);
+    }
+    if (limit === 0) return [];
+
+    let cursorOffset = options?.offset ?? 0;
+    const matches: Proposal[] = [];
+    for (let pageIndex = 0; pageIndex < MAX_STATUS_SCAN_PAGES; pageIndex += 1) {
+      const page = await this.fetchProposalWindow(cursorOffset, MAX_PROPOSALS_PER_CALL, options);
+      for (const proposal of page) {
+        if (proposal.status === status) {
+          matches.push(proposal);
+          if (matches.length >= limit) {
+            return matches.slice(0, limit);
+          }
+        }
+      }
+      if (page.length < MAX_PROPOSALS_PER_CALL) break;
+      cursorOffset += page.length;
+    }
+    return matches;
   }
 
   /**
@@ -416,6 +441,34 @@ export class QuorumClient {
     if (limit === 0) {
       return [];
     }
+
+    // Issue #450: prefer the contract's single-call `get_proposals(start, limit)`
+    // view (1-based start, max 100 per call), falling back to per-id reads only
+    // for older deployments without `get_proposals`.
+    if (this.getProposalsSupported !== false) {
+      try {
+        const results: Proposal[] = [];
+        let nextStart = offset + 1;
+        while (limit === undefined || results.length < limit) {
+          const remaining = limit === undefined ? MAX_PROPOSALS_PER_CALL : limit - results.length;
+          const chunkLimit = Math.min(MAX_PROPOSALS_PER_CALL, remaining);
+          const raw = await this.simulate<RawProposal[]>(
+            'get_proposals',
+            nativeToScVal(BigInt(nextStart), { type: 'u64' }),
+            nativeToScVal(chunkLimit, { type: 'u32' }),
+          );
+          const decoded = raw.map(decodeProposal);
+          this.getProposalsSupported = true;
+          results.push(...decoded);
+          if (decoded.length < chunkLimit) break;
+          nextStart += chunkLimit;
+        }
+        return results;
+      } catch {
+        this.getProposalsSupported = false;
+      }
+    }
+
     const count = await this.getProposalCount(options);
     const total = Number(count);
     if (offset >= total) {
@@ -444,6 +497,39 @@ export class QuorumClient {
     return this.cache.read('getProposalsByProposer', [proposer], options, async () => {
       const raw = await this.simulate<RawProposal[]>('get_proposals_by_proposer', new Address(proposer).toScVal());
       return raw.map(decodeProposal);
+    });
+  }
+
+  /**
+   * Returns the co-sponsor addresses for `proposalId` (issue #451).
+   *
+   * @param proposalId Proposal id.
+   * @example
+   * const cosponsors = await client.getCosponsors(7n);
+   */
+  async getCosponsors(proposalId: bigint, options?: ReadOptions): Promise<string[]> {
+    return this.cache.read('getCosponsors', [proposalId], options, async () => {
+      const raw = await this.simulate<string[]>('get_cosponsors', nativeToScVal(proposalId, { type: 'u64' }));
+      return raw ?? [];
+    });
+  }
+
+  /**
+   * Returns the decayed conviction tally for `proposalId`, or `null` for a
+   * standard (non-conviction) proposal (issue #451).
+   *
+   * @param proposalId Proposal id.
+   * @example
+   * const conviction = await client.getConviction(7n);
+   * if (conviction) console.log(conviction.forConviction, conviction.againstConviction);
+   */
+  async getConviction(proposalId: bigint, options?: ReadOptions): Promise<ConvictionTally | null> {
+    return this.cache.read('getConviction', [proposalId], options, async () => {
+      const raw = await this.simulate<RawConvictionTally | null | undefined>(
+        'get_conviction',
+        nativeToScVal(proposalId, { type: 'u64' }),
+      );
+      return raw ? decodeConvictionTally(raw) : null;
     });
   }
 
@@ -782,6 +868,66 @@ export class QuorumClient {
     return this.buildGovernanceTransaction(
       source ?? proposer,
       'create_proposal',
+      new Address(proposer).toScVal(),
+      nativeToScVal(title, { type: 'string' }),
+      nativeToScVal(description, { type: 'string' }),
+      nativeToScVal(metadataUri, { type: 'string' }),
+    );
+  }
+
+  /**
+   * Builds signable XDR for `create_cosponsored_proposal` (issue #451).
+   *
+   * Note: Every address in `cosponsors` must also sign the resulting transaction
+   * in addition to `proposer`. `source` pays the fee and defaults to `proposer`.
+   *
+   * @example
+   * const xdr = await client.buildCreateCosponsoredProposal(
+   *   proposer,
+   *   [cosponsorAddress],
+   *   'Treasury grant',
+   *   'Fund ecosystem tooling',
+   * );
+   */
+  async buildCreateCosponsoredProposal(
+    proposer: string,
+    cosponsors: string[],
+    title: string,
+    description: string,
+    metadataUri = '',
+    source?: string,
+  ): Promise<string> {
+    return this.buildGovernanceTransaction(
+      source ?? proposer,
+      'create_cosponsored_proposal',
+      new Address(proposer).toScVal(),
+      xdr.ScVal.scvVec(cosponsors.map(addr => new Address(addr).toScVal())),
+      nativeToScVal(title, { type: 'string' }),
+      nativeToScVal(description, { type: 'string' }),
+      nativeToScVal(metadataUri, { type: 'string' }),
+    );
+  }
+
+  /**
+   * Builds signable XDR for `create_conviction_proposal` (issue #451).
+   *
+   * @example
+   * const xdr = await client.buildCreateConvictionProposal(
+   *   proposer,
+   *   'Long-term grant',
+   *   'Conviction-weighted funding proposal',
+   * );
+   */
+  async buildCreateConvictionProposal(
+    proposer: string,
+    title: string,
+    description: string,
+    metadataUri = '',
+    source?: string,
+  ): Promise<string> {
+    return this.buildGovernanceTransaction(
+      source ?? proposer,
+      'create_conviction_proposal',
       new Address(proposer).toScVal(),
       nativeToScVal(title, { type: 'string' }),
       nativeToScVal(description, { type: 'string' }),
@@ -1172,6 +1318,20 @@ interface RawGovernanceStats {
   cancelled_proposals?: number | bigint;
   expired_proposals?: number | bigint;
   vetoed_proposals?: number | bigint;
+}
+
+interface RawConvictionTally {
+  for_conviction: bigint;
+  against_conviction: bigint;
+  updated_ledger: number;
+}
+
+function decodeConvictionTally(raw: RawConvictionTally): ConvictionTally {
+  return {
+    forConviction: raw.for_conviction,
+    againstConviction: raw.against_conviction,
+    updatedLedger: raw.updated_ledger,
+  };
 }
 
 function decodeProposal(raw: RawProposal): Proposal {
