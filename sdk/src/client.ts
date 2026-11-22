@@ -1,10 +1,10 @@
 import { rpc, Contract, Transaction, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, Address, Account, xdr } from '@stellar/stellar-sdk';
-import type { Proposal, ProposalAction, StakeInfo, ConvictionTally, GovernanceConfig, ContractVersions, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, TransactionConfirmationOptions, WaitForStatusOptions, FeeEstimate, ReadMethod, ReadOptions, GovernanceStats } from './types.js';
+import type { Proposal, ProposalAction, StakeInfo, ConvictionTally, GovernanceConfig, ContractVersions, QuorumClientConfig, VoteSupport, GetProposalsOptions, ProposalStatus, ProposalPhase, TransactionConfirmationOptions, WaitForStatusOptions, FeeEstimate, ReadMethod, ReadOptions, GovernanceStats } from './types.js';
 import { ReadCache } from './cache.js';
 import { SimulationBatcher, postSimulationBatch } from './batch.js';
 import { GovernanceContractError, GOVERNANCE_ERROR_MESSAGES, GovernanceError, governanceErrorFromCode, parseGovernanceError, RpcTimeoutError, TransactionFailedError, contractErrorCode } from './errors.js';
 import { decodeEvent } from './events.js';
-import type { ProposalVetoedEvent } from './events.js';
+import type { DelegatedEvent, ProposalVetoedEvent } from './events.js';
 
 /**
  * Source account used for read-only simulation.
@@ -237,6 +237,28 @@ export class QuorumClient {
     return null;
   }
 
+  /** Recent on-chain delegation changes for an address (Soroban's retained event window). */
+  async getDelegationEvents(address: string): Promise<Array<DelegatedEvent & { ledger: number }>> {
+    const latestLedger = await this.getLatestLedger();
+    const startLedger = Math.max(1, latestLedger - 120_960);
+    const topic = nativeToScVal('delegated', { type: 'symbol' }).toXDR('base64');
+    const delegatorTopic = new Address(address).toScVal().toXDR('base64');
+    const response = await this.read('getDelegationEvents', () => this.server.getEvents({
+      startLedger,
+      endLedger: latestLedger,
+      limit: 1000,
+      filters: [{ type: 'contract', contractIds: [this.config.governanceContractId], topics: [[topic, delegatorTopic]] }],
+    }));
+    const events: Array<DelegatedEvent & { ledger: number }> = [];
+    for (const event of response.events) {
+      const decoded = decodeEvent(event);
+      if (decoded?.type === 'delegated' && decoded.delegator === address) {
+        events.push({ ...decoded, ledger: Number(event.ledger) });
+      }
+    }
+    return events.sort((a, b) => b.ledger - a.ledger);
+  }
+
   async getProposalCount(options?: ReadOptions): Promise<bigint> {
     return this.cache.read('getProposalCount', [], options, async () =>
       BigInt(await this.simulate<bigint | number>('get_proposal_count')));
@@ -278,6 +300,16 @@ export class QuorumClient {
   /** Current representative, including delegations made directly on the token. */
   async getDelegate(holder: string): Promise<string> {
     return this.simulate<string>('get_delegate', new Address(holder).toScVal());
+  }
+
+  /** Effective delegated voting power at a historical ledger. */
+  async getPastVotes(holder: string, ledger: number, options?: ReadOptions): Promise<bigint> {
+    if (!Number.isInteger(ledger) || ledger < 0 || ledger > 0xffff_ffff) {
+      throw new RangeError('ledger must be a non-negative u32');
+    }
+    return BigInt(await this.simulate<bigint | number>(
+      'get_past_votes', new Address(holder).toScVal(), nativeToScVal(ledger, { type: 'u32' }),
+    ));
   }
 
   async getBalance(voter: string, options?: ReadOptions): Promise<bigint> {
@@ -936,6 +968,23 @@ export class QuorumClient {
   }
 
   /**
+   * Builds signable XDR for `veto(guardian, proposal_id, reason)` (#453).
+   * The connected guardian must authorize the transaction. The reason must be
+   * non-empty and no longer than the contract limit.
+   * @throws {GovernanceContractError} for Unauthorized, EmptyVetoReason,
+   * VetoReasonTooLong, VetoWindowClosed, or other contract errors.
+   */
+  async buildVeto(guardian: string, proposalId: bigint, reason: string, source?: string): Promise<string> {
+    return this.buildGovernanceTransaction(
+      source ?? guardian,
+      'veto',
+      new Address(guardian).toScVal(),
+      nativeToScVal(proposalId, { type: 'u64' }),
+      nativeToScVal(reason, { type: 'string' }),
+    );
+  }
+
+  /**
    * Builds signable XDR for `vote(voter, proposal_id, support)` (issue #114).
    *
    * Casts a vote on an active proposal. `support` is `0` (Against), `1` (For),
@@ -1017,9 +1066,10 @@ export class QuorumClient {
   /**
    * Builds signable XDR for `cancel(caller, proposal_id)` (issue #116).
    *
-   * Restricted by the contract to the proposer or the admin — anyone else
-   * fails with `Unauthorized`. `caller` must sign (via Freighter); `source`
-   * pays the fee and defaults to `caller` for the common single-wallet flow.
+   * Restricted by the contract to the proposal's proposer — anyone else,
+   * including the admin, fails with `Unauthorized` (#425). `caller` must sign
+   * (via Freighter); `source` pays the fee and defaults to `caller` for the
+   * common single-wallet flow.
    */
   async buildCancel(caller: string, proposalId: bigint, source?: string): Promise<string> {
     const feePayer = source ?? caller;
@@ -1199,10 +1249,21 @@ export class QuorumClient {
   /**
    * Derived display phase for a proposal, computed server-side so the client
    * does not need to compare ledger sequences.
-   * Returns one of: `'Pending' | 'Voting' | 'TimelockPending' | ProposalStatus`.
+   * Returns the contract-derived lifecycle phase, including `Ended` and
+   * `ReadyToExecute`.
    */
-  async getProposalPhase(proposalId: bigint, options?: ReadOptions): Promise<string> {
-    return this.simulate<string>('get_proposal_phase', nativeToScVal(proposalId, { type: 'u64' }));
+  async getProposalPhase(proposalId: bigint, options?: ReadOptions): Promise<ProposalPhase> {
+    const raw = await this.simulate<unknown>('get_proposal_phase', nativeToScVal(proposalId, { type: 'u64' }));
+    // Soroban encodes contract enums as a one-item vector of symbols.
+    const phase = Array.isArray(raw) && raw.length === 1 ? raw[0] : raw;
+    const phases: readonly string[] = [
+      'Pending', 'Active', 'Ended', 'Queued', 'ReadyToExecute', 'Passed',
+      'Executed', 'Failed', 'Cancelled', 'Expired', 'Vetoed',
+    ];
+    if (typeof phase !== 'string' || !phases.includes(phase)) {
+      throw new Error(`Unknown proposal phase returned by contract: ${String(phase)}`);
+    }
+    return phase as ProposalPhase;
   }
 
   /**

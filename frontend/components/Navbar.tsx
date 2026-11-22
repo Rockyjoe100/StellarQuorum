@@ -23,6 +23,7 @@ export default function Navbar() {
           <Link href="/create" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">{t("nav.create")}</Link>
           <Link href="/delegation" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">Delegation</Link>
           <Link href="/staking" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">Staking</Link>
+          <Link href="/admin" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">Admin</Link>
           <Link href="/settings" className="hover:text-slate-200 hover:underline underline-offset-4 transition-colors">{t("nav.settings")}</Link>
           {address ? (
             <>
@@ -31,7 +32,7 @@ export default function Navbar() {
             </>
           ) : (
             <button
-              onClick={connect}
+              onClick={() => void connect()}
               disabled={pending}
               className="px-4 py-1.5 border border-blue-700 text-blue-400 hover:bg-blue-900/30 focus-visible:bg-blue-900/30 rounded-md transition-colors disabled:opacity-50"
             >

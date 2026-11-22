@@ -218,9 +218,10 @@ export async function getProposalById(id: string): Promise<Proposal | undefined>
   const client = await createQuorumClient();
   const [proposal, latestLedger] = await Promise.all([client.getProposal(BigInt(match[1])), client.getLatestLedger()]);
   if (!proposal) return undefined;
-  const [actions, cosponsors] = await Promise.all([
+  const [actions, cosponsors, conviction] = await Promise.all([
     client.getProposalActions(proposal.id),
     client.getCosponsors(proposal.id),
+    client.getConviction(proposal.id),
   ]);
   const actionStates = await Promise.all(actions.map(async action => ({
     description: `${action.functionName} call`,
@@ -230,7 +231,7 @@ export async function getProposalById(id: string): Promise<Proposal | undefined>
     allowed: await client.isTargetAllowed(action.targetContractId),
   })));
   const uiProposal = {
-    ...toUiProposal(proposal, latestLedger),
+    ...toUiProposal(proposal, latestLedger, Date.now(), conviction ?? undefined),
     actions: actionStates,
     cosponsors,
   };
@@ -244,7 +245,7 @@ export async function getProposalById(id: string): Promise<Proposal | undefined>
  * actions or per-vote history, and counts time in ledgers, so those fields are
  * filled with neutral defaults and ledger-based date estimates.
  */
-export function toUiProposal(p: ChainProposal, latestLedger: number, now = Date.now()): Proposal {
+export function toUiProposal(p: ChainProposal, latestLedger: number, now = Date.now(), conviction?: Proposal["conviction"]): Proposal {
   const ledgerTime = (ledger: number) =>
     new Date(now + (ledger - latestLedger) * SECONDS_PER_LEDGER * 1000).toISOString();
   return {
@@ -252,8 +253,8 @@ export function toUiProposal(p: ChainProposal, latestLedger: number, now = Date.
     title: p.title,
     description: p.description,
     proposer: p.proposer,
-    // The UI has no "queued" state; a queued proposal has passed and awaits its timelock.
-    status: (p.status === "Queued" ? "passed" : p.status.toLowerCase()) as ProposalStatus,
+    // Keep contract lifecycle states distinct so filters and badges reflect the chain.
+    status: p.status.toLowerCase() as ProposalStatus,
     startTime: ledgerTime(p.startLedger),
     endTime: ledgerTime(p.endLedger),
     // The ledger a vote on this proposal is weighted by, not by the voter's
@@ -267,5 +268,6 @@ export function toUiProposal(p: ChainProposal, latestLedger: number, now = Date.
     category: "General",
     actions: [],
     votes: [],
+    conviction,
   };
 }
