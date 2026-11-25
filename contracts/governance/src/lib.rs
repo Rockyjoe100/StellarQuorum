@@ -64,6 +64,7 @@ pub enum GovernanceError {
     ActionFailed            = 36,
     TokenDelegationFailed  = 37,
     ActionAddedAfterVotingStarted = 38,
+    InvalidVotingPeriod     = 39,
 }
 
 /// Basis-point denominator: `quorum_bps` of 500 means 5% of total supply.
@@ -91,6 +92,10 @@ const MIN_QUORUM_BPS: u32 = 1;
 /// a 48-hour guard. This minimum of 1 ledger enforces at least one ledger
 /// delay between finalization and execution.
 const MIN_TIMELOCK_PERIOD: u32 = 1;
+
+/// Shortest voting window, in ledgers, that `update_config` will accept. A
+/// window of a few ledgers would let a proposal close before voters can see it.
+const MIN_VOTING_PERIOD: u32 = 100;
 
 /// Maximum length for proposal title in bytes.
 /// Prevents unbounded storage costs and ensures reasonable UI display.
@@ -288,6 +293,21 @@ pub struct ProposalDepositUpdated {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposerCooldownUpdated {
     pub ledgers: u32,
+}
+
+/// Emitted when the admin changes the quorum, voting period or timelock through
+/// `update_config`. Carries the value each parameter held before the call and
+/// the value it holds after, so an indexer can follow the change without reading
+/// storage. A parameter the call left alone shows the same value twice.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigUpdated {
+    pub old_quorum_bps: u32,
+    pub new_quorum_bps: u32,
+    pub old_voting_period: u32,
+    pub new_voting_period: u32,
+    pub old_timelock_period: u32,
+    pub new_timelock_period: u32,
 }
 
 /// Emitted when a passed proposal's deposit is returned to its proposer.
@@ -1124,6 +1144,72 @@ impl GovernanceContract {
         env.events().publish(
             (Symbol::new(&env, "proposer_cooldown_updated"),),
             ProposerCooldownUpdated { ledgers },
+        );
+        Ok(())
+    }
+
+    /// Updates the quorum, voting period and timelock after deployment. Admin
+    /// only. Each argument is optional, and `None` leaves that parameter as it is.
+    ///
+    /// Every supplied value is checked before anything is written, so one bad
+    /// value leaves the whole config unchanged. The quorum and timelock checks
+    /// match `initialize()`. The voting period must be at least
+    /// `MIN_VOTING_PERIOD` ledgers.
+    ///
+    /// The new values apply to proposals opened afterwards. Each proposal copies
+    /// its quorum, voting window and timelock when it opens, so proposals already
+    /// open keep the rules they started with.
+    pub fn update_config(
+        env: Env,
+        caller: Address,
+        new_quorum_bps: Option<u32>,
+        new_voting_period: Option<u32>,
+        new_timelock: Option<u32>,
+    ) -> Result<(), GovernanceError> {
+        let mut config: Config = Self::require_config(&env)?;
+        caller.require_auth();
+        if caller != config.admin {
+            return Err(GovernanceError::Unauthorized);
+        }
+
+        if let Some(quorum_bps) = new_quorum_bps {
+            if quorum_bps > MAX_QUORUM_BPS {
+                return Err(GovernanceError::InvalidQuorumBps);
+            }
+            if quorum_bps < MIN_QUORUM_BPS {
+                return Err(GovernanceError::MinimumQuorumRequired);
+            }
+        }
+        if let Some(voting_period) = new_voting_period {
+            if voting_period < MIN_VOTING_PERIOD {
+                return Err(GovernanceError::InvalidVotingPeriod);
+            }
+        }
+        if let Some(timelock) = new_timelock {
+            if timelock < MIN_TIMELOCK_PERIOD {
+                return Err(GovernanceError::MinimumTimelockRequired);
+            }
+        }
+
+        let old_quorum_bps = config.quorum_bps;
+        let old_voting_period = config.voting_period;
+        let old_timelock_period = config.timelock_period;
+        config.quorum_bps = new_quorum_bps.unwrap_or(old_quorum_bps);
+        config.voting_period = new_voting_period.unwrap_or(old_voting_period);
+        config.timelock_period = new_timelock.unwrap_or(old_timelock_period);
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::touch_instance(&env);
+
+        env.events().publish(
+            (Symbol::new(&env, "config_updated"),),
+            ConfigUpdated {
+                old_quorum_bps,
+                new_quorum_bps: config.quorum_bps,
+                old_voting_period,
+                new_voting_period: config.voting_period,
+                old_timelock_period,
+                new_timelock_period: config.timelock_period,
+            },
         );
         Ok(())
     }

@@ -19,6 +19,7 @@ Soroban smart contract implementing on-chain governance for the Quorum protocol.
 - `create_conviction_proposal` — open a proposal decided on time-decayed support (see Conviction Voting)
 - `set_proposal_deposit` — set the deposit a proposer locks when opening a proposal (admin only; `0` disables it)
 - `set_proposer_cooldown` — set how many ledgers a proposer waits between proposals (admin only; `0` disables it)
+- `update_config` — change the quorum, voting period and timelock after deployment; each argument is optional (admin only)
 - `set_proposal_action` — append a call (with arguments) the proposal makes on execution; up to 10 per proposal (proposer only, while voting is open)
 - `get_proposal_actions` — the calls a proposal makes on execution, in order
 - `veto` — block a queued proposal during the timelock (guardian only)
@@ -441,6 +442,8 @@ fn get_delegate(env, account: Address) -> Result<Address, GovernanceError>
 | 16 | `ContractPaused` | 34 | `VotingNotStarted` |
 | 17 | `InvalidQuorumBps` | 35 | `TooManyActions` |
 | 18 | `NotInitialized` | 36 | `ActionFailed` |
+| 37 | `TokenDelegationFailed` | 38 | `ActionAddedAfterVotingStarted` |
+| 39 | `InvalidVotingPeriod` | | |
 
 ## Emergency Pause
 
