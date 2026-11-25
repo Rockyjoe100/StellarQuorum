@@ -19,6 +19,7 @@ Soroban smart contract implementing on-chain governance for the Quorum protocol.
 - `create_conviction_proposal` — open a proposal decided on time-decayed support (see Conviction Voting)
 - `set_proposal_deposit` — set the deposit a proposer locks when opening a proposal (admin only; `0` disables it)
 - `set_proposer_cooldown` — set how many ledgers a proposer waits between proposals (admin only; `0` disables it)
+- `update_config` — change the quorum, voting period and timelock after deployment; each argument is optional (admin only)
 - `set_proposal_action` — append a call (with arguments) the proposal makes on execution; up to 10 per proposal (proposer only, while voting is open)
 - `get_proposal_actions` — the calls a proposal makes on execution, in order
 - `veto` — block a queued proposal during the timelock (guardian only)
@@ -359,6 +360,26 @@ fn set_guardian(env, new_guardian: Address) -> Result<(), GovernanceError>
 
 **Events:** `("guardian_changed")` → `GuardianChanged { previous_guardian, new_guardian }`.
 
+### `update_config`
+
+```rust
+fn update_config(env, caller: Address, new_quorum_bps: Option<u32>, new_voting_period: Option<u32>, new_timelock: Option<u32>) -> Result<(), GovernanceError>
+```
+
+**Purpose:** change the quorum, voting period and timelock after deployment, for example when the community votes to lower the quorum. Each argument is optional, and `None` leaves that parameter unchanged.
+
+**Validation:** every supplied value is checked before anything is written, so one bad value leaves the whole config as it was.
+
+- `new_quorum_bps` must be between `1` and `10_000` (`MinimumQuorumRequired` / `InvalidQuorumBps`).
+- `new_voting_period` must be at least `100` ledgers (`InvalidVotingPeriod`).
+- `new_timelock` must be at least `1` ledger (`MinimumTimelockRequired`).
+
+**Scope:** applies to proposals opened after the call. Each proposal copies its quorum, voting window and timelock when it opens, so proposals already open keep the rules they started with.
+
+**Errors:** `NotInitialized` (18), `Unauthorized` (2) when `caller` is not the admin, plus the validation errors above. The call traps if `caller` did not authorize it.
+
+**Events:** `("config_updated")` → `ConfigUpdated { old_quorum_bps, new_quorum_bps, old_voting_period, new_voting_period, old_timelock_period, new_timelock_period }`. A parameter the call left alone shows the same old and new value.
+
 ### Error codes
 
 | Code | Variant | Code | Variant |
@@ -381,6 +402,8 @@ fn set_guardian(env, new_guardian: Address) -> Result<(), GovernanceError>
 | 16 | `ContractPaused` | 34 | `VotingNotStarted` |
 | 17 | `InvalidQuorumBps` | 35 | `TooManyActions` |
 | 18 | `NotInitialized` | 36 | `ActionFailed` |
+| 37 | `TokenDelegationFailed` | 38 | `ActionAddedAfterVotingStarted` |
+| 39 | `InvalidVotingPeriod` | | |
 
 ## Emergency Pause
 

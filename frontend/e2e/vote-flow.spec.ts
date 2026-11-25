@@ -5,9 +5,9 @@ import { mockFreighter } from "./helpers";
  * Vote flow across Chromium, Firefox and WebKit (issue #313).
  *
  * Renders the fixture-backed proposal detail page and exercises the vote CTA.
- * On-chain submission still routes through the connect prompt (tracked with
- * the wallet wiring in #24), so the assertion here is the prompt itself —
- * the same user-visible behaviour on every engine.
+ * Without a connected wallet the choices are disabled and the page says how to
+ * connect (issue #10); on-chain submission needs a live contract, which the
+ * fixture-backed page does not have.
  */
 test.describe("vote flow", () => {
   test("reaches an active proposal and offers the vote choices", async ({ page }) => {
@@ -26,13 +26,11 @@ test.describe("vote flow", () => {
     await expect(page.getByText("Connect your Freighter wallet to vote")).toBeVisible();
   });
 
-  test("prompts to connect when a vote is cast without a wallet", async ({ page }) => {
+  test("keeps the vote choices disabled without a wallet", async ({ page }) => {
     await page.goto("/proposals/QIP-001");
-    const dialog = page.waitForEvent("dialog");
-    await page.getByRole("button", { name: "Vote For proposal" }).click();
-    expect((await dialog).message()).toBe(
-      "Connect your Freighter wallet to vote — testnet integration in progress.",
-    );
+    await expect(page.getByRole("button", { name: "Vote For proposal" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Vote Against" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Abstain" })).toBeDisabled();
   });
 
   test("shows the voting-power preview for a connected wallet", async ({ page }) => {
