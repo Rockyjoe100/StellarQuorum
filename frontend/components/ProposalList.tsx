@@ -10,6 +10,9 @@ import { formatNumber, t } from "@/lib/i18n";
 
 type Density = "cards" | "compact";
 
+/** How long typing must pause before the list follows the search box (issue #12). */
+const SEARCH_DEBOUNCE_MS = 300;
+
 const FILTERS: { label: string; value: ProposalStatus | "all" }[] = [
   { label: t("proposals.all"), value: "all" },
   { label: t("common.active"), value: "active" },
@@ -27,6 +30,10 @@ export default function ProposalList({ proposals }: { proposals: Proposal[] }) {
   const [filter, setFilter] = useState<ProposalStatus | "all">("all");
   const [sort, setSort] = useState<"recent" | "votes" | "title">("recent");
   const [density, setDensity] = useState<Density>("cards");
+  // `query` is what the box shows. `searchText` is what the list uses, and it
+  // catches up once typing has paused, so the list is not re-filtered on every key.
+  const [query, setQuery] = useState("");
+  const [searchText, setSearchText] = useState("");
   const activeCount = proposals.filter(p => p.status === 'active').length;
 
   useEffect(() => {
@@ -36,12 +43,29 @@ export default function ProposalList({ proposals }: { proposals: Proposal[] }) {
     } catch { /* localStorage unavailable */ }
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchText(query), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   function toggleDensity(next: Density) {
     setDensity(next);
     try { localStorage.setItem("proposal-density", next); } catch { /* ignore */ }
   }
 
-  const filtered = [...(filter === "all" ? proposals : proposals.filter(p => p.status === filter))].sort((a, b) => {
+  function clearSearch() {
+    setQuery("");
+    setSearchText("");
+  }
+
+  // Status filter first, then the search, so the count can say how many of the
+  // proposals in the selected tab match.
+  const needle = searchText.trim().toLowerCase();
+  const byStatus = filter === "all" ? proposals : proposals.filter(p => p.status === filter);
+  const matching = needle
+    ? byStatus.filter(p => p.title.toLowerCase().includes(needle) || p.description.toLowerCase().includes(needle))
+    : byStatus;
+  const filtered = [...matching].sort((a, b) => {
     if (sort === "votes") return (b.forVotes + b.againstVotes + b.abstainVotes) - (a.forVotes + a.againstVotes + a.abstainVotes);
     if (sort === "title") return a.title.localeCompare(b.title);
     return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
@@ -53,6 +77,35 @@ export default function ProposalList({ proposals }: { proposals: Proposal[] }) {
         <h1 className="text-3xl font-bold text-white mb-2">{t("proposals.title")}</h1>
         <p className="text-slate-400">{t("proposals.summary", { total: formatNumber(proposals.length), active: formatNumber(activeCount) })}</p>
       </div>
+
+      {/* Search: title and description, case-insensitive */}
+      <div className="relative mb-4">
+        <label htmlFor="proposal-search" className="sr-only">{t("proposals.searchLabel")}</label>
+        <input
+          id="proposal-search"
+          type="text"
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder={t("proposals.searchPlaceholder")}
+          autoComplete="off"
+          className="w-full rounded-md border border-[#1e2d40] bg-[#0d1520] py-2 pl-3 pr-10 text-sm text-slate-200 placeholder:text-slate-500 focus:border-blue-700 focus:outline-none"
+        />
+        {query !== "" && (
+          <button
+            type="button"
+            onClick={clearSearch}
+            aria-label={t("proposals.searchClear")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 px-2 text-lg leading-none text-slate-400 hover:text-slate-200"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {needle !== "" && (
+        <p aria-live="polite" className="mb-4 text-sm text-slate-500">
+          {t("proposals.searchCount", { shown: formatNumber(filtered.length), total: formatNumber(byStatus.length) })}
+        </p>
+      )}
 
       {/* Filter tabs */}
       <div className="flex gap-2 mb-8 flex-wrap">
@@ -105,7 +158,9 @@ export default function ProposalList({ proposals }: { proposals: Proposal[] }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="text-center py-16 text-slate-500">{t("proposals.empty")}</div>
+        <div className="text-center py-16 text-slate-500">
+          {needle !== "" ? t("proposals.searchEmpty", { query: searchText.trim() }) : t("proposals.empty")}
+        </div>
       ) : density === "cards" ? (
         <div className="grid md:grid-cols-2 gap-4">
           {filtered.map(p => (
