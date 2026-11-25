@@ -59,11 +59,16 @@ with QuorumClient(config) as client:
     unsigned_xdr = client.build_finalize("G...", 1)
 ```
 
-`Proposal`, `GovernanceConfig`, and `GovernanceStats` are frozen dataclasses with the TypeScript
-SDK's fields in snake_case. Addresses are Stellar strkey strings, statuses
-are `Pending`, `Active`, `Passed`, `Failed`, `Queued`, `Executed`, or
-`Cancelled`, and all u64/i128 values use arbitrary-precision Python `int`.
-Use `dataclasses.asdict()` to convert a result to a dictionary.
+`Proposal` and `GovernanceConfig` are frozen dataclasses with the TypeScript
+SDK's fields in snake_case, including proposal timelock, execution grace,
+metadata URI, and kind. Proposal statuses are `Active`, `Failed`, `Queued`,
+`Executed`, `Cancelled`, `Expired`, or `Vetoed`; proposal kinds are
+`Signaling` or `Executable`. All u64/i128 values use arbitrary-precision
+Python `int`. Use `dataclasses.asdict()` to convert a result to a dictionary.
+`ProposalPhase` is the contract-derived lifecycle phase and `GovernanceStats`
+contains aggregate proposal counts. `ProposalPhase` includes `Pending`,
+`Active`, `Ended`, `Queued`, `ReadyToExecute`, `Passed`, `Executed`, `Failed`,
+`Cancelled`, `Expired`, and `Vetoed`.
 
 `get_proposal()` returns `None` only for contract error 3 (ProposalNotFound).
 Other simulation failures raise `SimulationError`, whose `code` exposes the

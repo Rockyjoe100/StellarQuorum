@@ -24,7 +24,8 @@ export const PROPOSALS: Proposal[] = [
     abstainVotes: 34000,
     quorumRequired: 500000,
     category: "Financial",
-    actions: [{ description: "Update fee parameter in FeeController contract", contractAddress: "CCFEECONTROLLER...A7BX", functionName: "set_fee_bps" }],
+    actions: [{ description: "Update fee parameter in FeeController contract", contractAddress: "CCFEECONTROLLER...A7BX", functionName: "set_fee_bps", args: [500], allowed: true }],
+    cosponsors: ["GCO...SP01", "GCO...SP02"],
     votes: [
       { voter: "GDEF...8YPQ", choice: "for", weight: 120000, timestamp: "2026-05-12T14:22:00Z" },
       { voter: "GHIJ...2WNM", choice: "for", weight: 85000, timestamp: "2026-05-13T09:15:00Z" },
@@ -217,8 +218,23 @@ export async function getProposalById(id: string): Promise<Proposal | undefined>
   const client = await createQuorumClient();
   const [proposal, latestLedger] = await Promise.all([client.getProposal(BigInt(match[1])), client.getLatestLedger()]);
   if (!proposal) return undefined;
-  const conviction = await client.getConviction(proposal.id);
-  const uiProposal = toUiProposal(proposal, latestLedger, Date.now(), conviction ?? undefined);
+  const [actions, cosponsors, conviction] = await Promise.all([
+    client.getProposalActions(proposal.id),
+    client.getCosponsors(proposal.id),
+    client.getConviction(proposal.id),
+  ]);
+  const actionStates = await Promise.all(actions.map(async action => ({
+    description: `${action.functionName} call`,
+    contractAddress: action.targetContractId,
+    functionName: action.functionName,
+    args: action.args,
+    allowed: await client.isTargetAllowed(action.targetContractId),
+  })));
+  const uiProposal = {
+    ...toUiProposal(proposal, latestLedger, Date.now(), conviction ?? undefined),
+    actions: actionStates,
+    cosponsors,
+  };
   if (proposal.status !== "Vetoed") return uiProposal;
   const veto = await client.getProposalVetoEvent(proposal.id);
   return veto ? { ...uiProposal, veto: { guardian: veto.guardian, reason: veto.reason } } : uiProposal;

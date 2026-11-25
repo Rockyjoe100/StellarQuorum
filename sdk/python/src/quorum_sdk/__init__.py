@@ -5,6 +5,7 @@ from .models import (
     GovernanceConfig,
     GovernanceStats,
     Proposal,
+    ProposalKind,
     ProposalPhase,
     ProposalStatus,
     QuorumClientConfig,
@@ -13,5 +14,6 @@ from .models import (
 
 __all__ = [
     "QuorumClient", "QuorumClientConfig", "SimulationError", "Proposal",
-    "ProposalStatus", "ProposalPhase", "GovernanceConfig", "GovernanceStats", "VoteSupport",
+    "ProposalStatus", "ProposalPhase", "ProposalKind", "GovernanceConfig",
+    "GovernanceStats", "VoteSupport",
 ]
