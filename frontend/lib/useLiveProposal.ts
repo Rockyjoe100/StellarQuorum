@@ -6,6 +6,12 @@ import type { Proposal } from "@/lib/types";
 /** How often the detail page re-reads a proposal while it is visible (issue #41). */
 export const LIVE_POLL_INTERVAL_MS = 10_000;
 
+/**
+ * Dispatched on `window` after a vote is confirmed, so the live view re-reads
+ * the proposal straight away instead of waiting for the next poll.
+ */
+export const PROPOSAL_CHANGED_EVENT = "quorum:proposal-changed";
+
 interface LiveProposal {
   proposal: Proposal;
   /** Epoch milliseconds of the last successful read. */
@@ -56,10 +62,12 @@ export function useLiveProposal(initial: Proposal): LiveProposal {
 
     if (document.visibilityState === "visible") start();
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(PROPOSAL_CHANGED_EVENT, refresh);
     return () => {
       cancelled = true;
       stop();
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener(PROPOSAL_CHANGED_EVENT, refresh);
     };
   }, [initial.id]);
 

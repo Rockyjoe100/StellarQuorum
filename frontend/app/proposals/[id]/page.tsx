@@ -86,8 +86,6 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
 
       <ProposalLifecycleActions proposalId={proposal.id} />
 
-      <ProposalLifecycleActions proposalId={proposal.id} />
-
       {/* Description */}
       <div className="p-5 rounded-xl bg-[#0d1520] border border-[#1a2535] mb-6">
         <h2 className="font-semibold text-white mb-3">{t("common.description")}</h2>
@@ -135,8 +133,7 @@ export default async function ProposalDetailPage({ params }: { params: Promise<{
                 the proposal's snapshot ledger, which is not necessarily the
                 balance the wallet shows now. */}
             <VotingPowerPreview snapshotLedger={proposal.snapshotLedger} />
-            <VoteButtons />
-            <p className="text-xs text-slate-500">{t("vote.connect")}</p>
+            <VoteButtons proposalId={proposal.id} />
           </div>
         )}
       </LiveVoteResults>
