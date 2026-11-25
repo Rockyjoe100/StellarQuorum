@@ -44,6 +44,7 @@ export enum GovernanceError {
   ActionFailed = 36,
   TokenDelegationFailed = 37,
   ActionAddedAfterVotingStarted = 38,
+  InvalidVotingPeriod = 39,
 }
 
 /** Mirror of `TokenError` in contracts/token/src/lib.rs. Same rules as above. */
@@ -104,6 +105,7 @@ export const GOVERNANCE_ERROR_MESSAGES: Readonly<Record<GovernanceError, string>
   [GovernanceError.ActionFailed]: 'A proposal action failed',
   [GovernanceError.TokenDelegationFailed]: 'The token contract rejected the delegation update',
   [GovernanceError.ActionAddedAfterVotingStarted]: 'Proposal actions cannot change after voting starts',
+  [GovernanceError.InvalidVotingPeriod]: 'The voting period is below the contract minimum',
 };
 
 /** A typed error for any governance code without a specialized SDK subclass. */
