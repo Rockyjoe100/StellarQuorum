@@ -23,6 +23,8 @@ Soroban smart contract implementing on-chain governance for the Quorum protocol.
 - `get_proposal_actions` — the calls a proposal makes on execution, in order
 - `veto` — block a queued proposal during the timelock (guardian only)
 - `set_guardian` — replace the guardian (admin only)
+- `update_guardian` — hand the guardian role to a new address (current guardian only)
+- `delegate` / `undelegate` / `get_delegate` — assign, clear, or read a voting-power representative (see Delegation)
 - `allow_target` / `disallow_target` — manage the contracts a proposal action may call (admin only)
 - `is_target_allowed` / `get_cosponsors` / `get_conviction` — reads for the features above
 
@@ -197,7 +199,7 @@ the whole call is rolled back and the proposal stays `Queued`.
 `TimelockNotExpired` (12), `ExecutionExpired` (15) after `queue_ledger + execution_grace_period`,
 `TargetNotAllowed` (27) if an action's target was removed from the allowlist, `ActionFailed` (36) if an action call fails.
 
-**Events:** `("proposal_executed", id)` → `ProposalExecuted { id, executor }`, plus whatever the called contracts emit.
+**Events:** `("action_executed", id)` → `ActionExecuted { id, index, target, function }` once per action, after that action's call succeeds and before `proposal_executed`; then `("proposal_executed", id)` → `ProposalExecuted { id, executor }`. The called contracts emit their own events too.
 
 ```bash
 stellar contract invoke --id $GOV_ID --source anyone --network testnet -- \
@@ -358,6 +360,64 @@ fn set_guardian(env, new_guardian: Address) -> Result<(), GovernanceError>
 **Errors:** `NotInitialized` (18). The call traps without the admin's authorization.
 
 **Events:** `("guardian_changed")` → `GuardianChanged { previous_guardian, new_guardian }`.
+
+### `update_guardian`
+
+```rust
+fn update_guardian(env, caller: Address, new_guardian: Address) -> Result<(), GovernanceError>
+```
+
+**Purpose:** the current guardian hands the veto role to `new_guardian`, for example when rotating to a new multisig signer set. Takes effect immediately. The admin cannot use this path; it uses `set_guardian`, which stays as the recovery route if the guardian key is lost.
+
+| Parameter | Type | Valid range / meaning |
+| --- | --- | --- |
+| `caller` | `Address` | The current guardian. Must authorize, and is checked before any state is read. |
+| `new_guardian` | `Address` | The address that holds the veto from now on. |
+
+**Returns:** `()`.
+
+**Errors:** `NotInitialized` (18), `Unauthorized` (2) if `caller` is not the current guardian.
+
+**Events:** `("guardian_changed")` → `GuardianChanged { previous_guardian, new_guardian }`.
+
+### `delegate`
+
+```rust
+fn delegate(env, delegator: Address, delegatee: Address) -> Result<(), GovernanceError>
+```
+
+**Purpose:** assign `delegatee` as the voting-power representative of `delegator`, without moving tokens. The token keeps the checkpoint history, so the new representative counts for proposals whose snapshot ledger is after this call. See [Delegation](#delegation).
+
+| Parameter | Type | Valid range / meaning |
+| --- | --- | --- |
+| `delegator` | `Address` | The token holder. Must authorize. |
+| `delegatee` | `Address` | The representative. Pass `delegator` itself to clear the delegation. |
+
+**Returns:** `()`.
+
+**Errors:** `NotInitialized` (18), `Overflow` (13) if the token reports an overflow, `TokenDelegationFailed` (37) for any other token-side failure.
+
+**Events:** `("delegated", delegator, delegatee)` → `Delegated { delegator, delegatee }`, only when the representative actually changes.
+
+### `undelegate`
+
+```rust
+fn undelegate(env, delegator: Address) -> Result<(), GovernanceError>
+```
+
+**Purpose:** clear the delegation and restore the holder's own voting power. Same as `delegate(delegator, delegator)`.
+
+**Errors and events:** as for `delegate`.
+
+### `get_delegate`
+
+```rust
+fn get_delegate(env, account: Address) -> Result<Address, GovernanceError>
+```
+
+**Purpose:** read the representative the token records for `account`. Returns `account` itself when nothing is delegated.
+
+**Errors:** `NotInitialized` (18).
 
 ### Error codes
 
