@@ -440,7 +440,7 @@ make audit-sdk
 
 ### Workspace Root Helpers (Makefile & npm scripts)
 
-For convenience, a root `Makefile` (and `justfile`) provides shortcuts that fan out to the exact per-package commands documented above. You can run all checks across the entire repo or target specific packages from the repository root:
+For convenience, a root `Makefile` provides shortcuts that fan out to the exact per-package commands documented above. You can run all checks across the entire repo or target specific packages from the repository root:
 
 ```bash
 # High-level workflows across all packages
@@ -473,8 +473,6 @@ make audit-frontend    # cd frontend && npm audit --audit-level=high
 make audit-sdk         # cd sdk && npm audit --audit-level=high
 make check-wasm-size   # bash scripts/check-wasm-size.sh
 ```
-
-Contributors who prefer [`just`](https://github.com/casey/just) can use the equivalent `just` recipes (`just test`, `just lint`, `just build`, etc.).
 
 The root `package.json` also provides npm scripts to run individual test suites:
 
