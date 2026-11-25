@@ -4173,3 +4173,120 @@ fn cancel_admin_transfer() {
     let config = governance.get_config();
     assert_eq!(config.admin, admin);
 }
+
+// ─── update_config (#8) ──────────────────────────────────────────────────────
+
+#[test]
+fn update_config_changes_only_the_parameters_it_is_given() {
+    let env = Env::default();
+    let (admin, _, governance_id, _) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+
+    governance.update_config(&admin, &Some(400), &None, &None);
+    let config = governance.get_config();
+    assert_eq!(config.quorum_bps, 400);
+    assert_eq!(config.voting_period, VOTING_PERIOD);
+    assert_eq!(config.timelock_period, TIMELOCK_PERIOD);
+
+    governance.update_config(&admin, &None, &Some(200), &Some(75));
+    let config = governance.get_config();
+    assert_eq!(config.quorum_bps, 400);
+    assert_eq!(config.voting_period, 200);
+    assert_eq!(config.timelock_period, 75);
+}
+
+#[test]
+fn update_config_emits_the_old_and_new_values() {
+    let env = Env::default();
+    let (admin, _, governance_id, _) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+
+    governance.update_config(&admin, &Some(400), &Some(200), &None);
+
+    let (topics, data) = last_governance_event(&env, &governance_id);
+    assert_eq!(topics, (Symbol::new(&env, "config_updated"),).into_val(&env));
+    assert_eq!(
+        ConfigUpdated::try_from_val(&env, &data).unwrap(),
+        ConfigUpdated {
+            old_quorum_bps: QUORUM_BPS,
+            new_quorum_bps: 400,
+            old_voting_period: VOTING_PERIOD,
+            new_voting_period: 200,
+            old_timelock_period: TIMELOCK_PERIOD,
+            new_timelock_period: TIMELOCK_PERIOD,
+        }
+    );
+}
+
+#[test]
+fn update_config_rejects_a_caller_who_is_not_the_admin() {
+    let env = Env::default();
+    let (_admin, _, governance_id, _) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    let attacker = Address::generate(&env);
+
+    assert_eq!(
+        governance.try_update_config(&attacker, &Some(400), &None, &None),
+        Err(Ok(GovernanceError::Unauthorized))
+    );
+    assert_eq!(governance.get_config().quorum_bps, QUORUM_BPS);
+}
+
+#[test]
+fn update_config_checks_every_value_before_writing_any_of_them() {
+    let env = Env::default();
+    let (admin, _, governance_id, _) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+
+    // The quorum is valid, but the voting period is too short, so nothing changes.
+    assert_eq!(
+        governance.try_update_config(&admin, &Some(400), &Some(99), &None),
+        Err(Ok(GovernanceError::InvalidVotingPeriod))
+    );
+    assert_eq!(
+        governance.try_update_config(&admin, &Some(10_001), &None, &None),
+        Err(Ok(GovernanceError::InvalidQuorumBps))
+    );
+    assert_eq!(
+        governance.try_update_config(&admin, &Some(0), &None, &None),
+        Err(Ok(GovernanceError::MinimumQuorumRequired))
+    );
+    assert_eq!(
+        governance.try_update_config(&admin, &None, &None, &Some(0)),
+        Err(Ok(GovernanceError::MinimumTimelockRequired))
+    );
+
+    let config = governance.get_config();
+    assert_eq!(config.quorum_bps, QUORUM_BPS);
+    assert_eq!(config.voting_period, VOTING_PERIOD);
+    assert_eq!(config.timelock_period, TIMELOCK_PERIOD);
+}
+
+#[test]
+fn update_config_accepts_the_boundary_values() {
+    let env = Env::default();
+    let (admin, _, governance_id, _) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+
+    governance.update_config(&admin, &Some(10_000), &Some(100), &Some(1));
+
+    let config = governance.get_config();
+    assert_eq!(config.quorum_bps, 10_000);
+    assert_eq!(config.voting_period, 100);
+    assert_eq!(config.timelock_period, 1);
+}
+
+#[test]
+fn update_config_leaves_an_open_proposal_on_its_original_rules() {
+    let env = Env::default();
+    let (admin, _, governance_id, id) = open_proposal(&env);
+    let governance = GovernanceContractClient::new(&env, &governance_id);
+    let before = governance.get_proposal(&id);
+
+    governance.update_config(&admin, &Some(1_000), &Some(500), &Some(999));
+
+    let after = governance.get_proposal(&id);
+    assert_eq!(after.quorum_required, before.quorum_required);
+    assert_eq!(after.end_ledger, before.end_ledger);
+    assert_eq!(after.timelock_period, before.timelock_period);
+}
